@@ -18,9 +18,9 @@ else
 endif
 
 # phony targets
-.PHONY: all clean build-local build-win build-linux
+.PHONY: local all clean build-local build-win build-linux
 # default, 1) clean old bins 2) create new
-all: clean build-local
+local: clean build-local
 
 # Build for your current machine's OS
 build-local:
@@ -31,29 +31,34 @@ build-local:
 # Build the Web Server
 build-win:
 	@echo "Building windows web server..."
-	GOOS=windows GOARCH=amd64 go build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_DIR)/$(APP_NAME).exe $(SERVER_MAIN)/main.go
+	TARGET="windows"; \
+	GOOS=windows GOARCH=amd64 go build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_DIR)/$(APP_NAME)-$$TARGET.exe $(SERVER_MAIN)/main.go
 	@echo "Windows web server built successfully"
 #
 build-linux:
 	@echo "Building linux Web Server..."
-	GOOS=linux GOARCH=amd64 go build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_DIR)/$(APP_NAME) $(SERVER_MAIN)/main.go
+	TARGET="linux"; \
+	GOOS=linux GOARCH=amd64 go build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_DIR)/$(APP_NAME)-$$TARGET $(SERVER_MAIN)/main.go
 	@echo "linux web Server built successfully"
+#
+build-Apple:
+	@echo "Building Apple Web Server..."
+	TARGET="darwin"; \
+	GOOS=darwin GOARCH=amd64 go build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_DIR)/$(APP_NAME)-$$TARGET $(SERVER_MAIN)/main.go
+	@echo "Apple web Server built successfully"
 
 # Remove previously built binaries
 clean:
 	@echo "Cleaning up old binaries..."
 	rm -rf $(BINARY_DIR)
 
-# Compile and immediately run the app
-run-web: build-local
-	@echo "Running Web Server..."
-	./$(BINARY_DIR)/$(APP_NAME)
+all: clean build-win build-linux build-Apple
 
 # Show help for Makefile
 help:
 	@echo "Available commands:"
 	@echo "  make            - Clean and build for local archatecture"
+	@echo "  make all            - Clean and build for all archatecture"
 	@echo "  make build-win  - Build only the windows Web Server binary"
 	@echo "  make build-linux  - Build only the linux Web Server binary"
-	@echo "  make run-web    - Build and immediately execute the Web Server"
 	@echo "  make clean      - Delete the build directory"
