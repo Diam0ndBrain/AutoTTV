@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<title>AutoTTV - Browser Login Test</title>
+	<style>
+		body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0e0e10; color: #f0f0f0; margin: 0; padding: 0; }
+		.navbar { background-color: #18181b; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2d2d30; }
+		.navbar h1 { margin: 0; color: #a970ff; font-size: 22px; }
+		.container { max-width: 600px; margin: 40px auto; padding: 0 20px; }
+		.card { background-color: #18181b; padding: 25px; border-radius: 8px; border: 1px solid #2d2d30; margin-bottom: 25px; }
+		h2 { margin-top: 0; font-size: 18px; color: #e4e4e7; border-bottom: 1px solid #2d2d30; padding-bottom: 10px; }
+		p { line-height: 1.6; color: #adadb8; font-size: 14px; }
+		ol { padding-left: 20px; color: #adadb8; font-size: 14px; line-height: 1.8; }
+		.btn-group { display: flex; gap: 15px; margin-top: 25px; }
+		.btn { flex-grow: 1; padding: 14px 24px; background-color: #9146ff; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition: background-color 0.2s, transform 0.1s; font-size: 14px; text-align: center; text-decoration: none; }
+		.btn:hover:not(:disabled) { background-color: #772ce8; }
+		.btn:active:not(:disabled) { transform: scale(0.98); }
+		.btn-secondary { background-color: #27272a; border: 1px solid #3f3f46; color: #adadb8; }
+		.btn-secondary:hover:not(:disabled) { background-color: #3f3f46; color: #fff; }
+		.btn-danger { background-color: #eb0400; }
+		.btn-danger:hover:not(:disabled) { background-color: #c20300; }
+		.status-box { background-color: #242427; border: 1px solid #3f3f46; border-radius: 6px; padding: 15px; margin-top: 20px; display: flex; justify-content: space-between; align-items: center; }
+		.status-label { font-size: 12px; color: #adadb8; text-transform: uppercase; font-weight: bold; }
+		.status-val { font-size: 14px; font-weight: bold; }
+		.status-active { color: #2ecc71; text-shadow: 0 0 10px rgba(46, 204, 113, 0.2); }
+		.status-closed { color: #adadb8; }
+		.back-link { display: inline-block; margin-top: 20px; color: #adadb8; text-decoration: none; font-size: 14px; transition: color 0.2s; }
+		.back-link:hover { color: #a970ff; text-decoration: underline; }
+	</style>
+	<script>
+		async function apiCall(endpoint) {
+			try {
+				const resp = await fetch(endpoint, { method: 'POST' });
+				if (!resp.ok) {
+					alert("Action failed: " + (await resp.text()));
+				}
+				updateStatus();
+			} catch (e) {
+				alert("Network error: " + e.message);
+			}
+		}
+
+		async function updateStatus() {
+			try {
+				const resp = await fetch('/api/status');
+				if (resp.ok) {
+					const data = await resp.json();
+					const statusText = document.getElementById('browser-status-text');
+					if (data.browser_open) {
+						statusText.innerText = "ACTIVE";
+						statusText.className = "status-val status-active";
+					} else {
+						statusText.innerText = "CLOSED";
+						statusText.className = "status-val status-closed";
+					}
+				}
+			} catch (e) {
+				console.error("Failed to fetch status", e);
+			}
+		}
+
+		// Update status every 2 seconds
+		setInterval(updateStatus, 2000);
+		window.onload = updateStatus;
+	</script>
+</head>
+<body>
+	<div class="navbar">
+		<h1>AutoTTV</h1>
+	</div>
+
+	<div class="container">
+		<div class="card">
+			<h2>Browser Login Setup & Test</h2>
+			<p>
+				Because AutoTTV runs Twitch in an isolated browser window (to allow precise background tracking and automatic closing), it starts with a clean profile that doesn't share your main browser's cookies.
+			</p>
+			<p>
+				Use this page to perform your initial log in so Twitch remembers your credentials during fully automated watch sessions:
+			</p>
+			<ol>
+				<li>Click <strong>Launch Test Browser</strong> below.</li>
+				<li>In the window that opens, sign in manually to your <strong>Twitch</strong> account.</li>
+				<li>Once logged in successfully, click <strong>Close Test Browser</strong> on this dashboard. This gracefully closes the browser, ensuring your cookies are properly saved to disk.</li>
+				<li>Click <strong>Launch Test Browser</strong> again to verify that you are automatically logged in!</li>
+			</ol>
+
+			<div class="status-box">
+				<span class="status-label">Test Browser Window:</span>
+				<span id="browser-status-text" class="status-val status-closed">CLOSED</span>
+			</div>
+
+			<div class="btn-group">
+				<button class="btn" onclick="apiCall('/api/browser/open')">Launch Test Browser</button>
+				<button class="btn btn-danger" onclick="apiCall('/api/browser/close')">Close Test Browser</button>
+			</div>
+		</div>
+
+		<a href="/" class="back-link">&larr; Return to Dashboard</a>
+	</div>
+</body>
+</html>
