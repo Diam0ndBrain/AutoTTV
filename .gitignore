@@ -44,7 +44,6 @@ go.work.sum
 /bin/*
 
 # Compiled binaries and executables
-/autottv
 autottv-upx.exe
 autottv.exe
 autottv
