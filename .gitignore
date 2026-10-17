@@ -31,3 +31,24 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Agents
+/gemini
+/.gemini
+/.claude
+/.codex
+/.devin
+
+# Binary dir
+/bin/*
+
+# Compiled binaries and executables
+/autottv
+autottv-upx.exe
+autottv.exe
+autottv
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
