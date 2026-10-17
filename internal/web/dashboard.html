@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<title>AutoTTV Dashboard</title>
+	<style>
+		body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0e0e10; color: #f0f0f0; margin: 0; padding: 0; }
+		.navbar { background-color: #18181b; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2d2d30; }
+		.navbar h1 { margin: 0; color: #a970ff; font-size: 22px; }
+		.container { max-width: 800px; margin: 40px auto; padding: 0 20px; }
+		.card { background-color: #18181b; padding: 25px; border-radius: 8px; border: 1px solid #2d2d30; margin-bottom: 25px; transition: opacity 0.3s; }
+		h2 { margin-top: 0; font-size: 18px; color: #e4e4e7; border-bottom: 1px solid #2d2d30; padding-bottom: 10px; }
+		.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 25px; }
+		.stat-box { background-color: #242427; padding: 20px; border-radius: 6px; border: 1px solid #3f3f46; text-align: center; }
+		.stat-label { font-size: 12px; color: #adadb8; text-transform: uppercase; margin-bottom: 8px; font-weight: bold; }
+		.stat-val { font-size: 24px; font-weight: bold; }
+		.status-live { color: #00f0ff; text-shadow: 0 0 10px rgba(0, 240, 255, 0.3); }
+		.status-offline { color: #adadb8; }
+		.status-active { color: #2ecc71; text-shadow: 0 0 10px rgba(46, 204, 113, 0.3); }
+		.form-inline { display: flex; gap: 10px; }
+		input[type="text"], input[type="password"] { flex-grow: 1; padding: 12px; border-radius: 6px; border: 1px solid #3f3f46; background-color: #27272a; color: #fff; font-size: 14px; }
+		input[type="text"]:focus, input[type="password"]:focus { outline: none; border-color: #9146ff; }
+		input[type="text"]:disabled, input[type="password"]:disabled, button:disabled { background-color: #1f1f22; border-color: #2d2d30; color: #71717a; cursor: not-allowed; }
+		.btn { padding: 12px 24px; background-color: #9146ff; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition: background-color 0.2s, transform 0.1s; }
+		.btn:hover:not(:disabled) { background-color: #772ce8; }
+		.btn:active:not(:disabled) { transform: scale(0.98); }
+		.btn-secondary { background-color: #27272a; border: 1px solid #3f3f46; color: #adadb8; }
+		.btn-secondary:hover:not(:disabled) { background-color: #3f3f46; color: #fff; }
+		.btn-danger { background-color: #eb0400; }
+		.btn-danger:hover:not(:disabled) { background-color: #c20300; }
+		.btn-success { background-color: #2ecc71; }
+		.btn-success:hover:not(:disabled) { background-color: #27ae60; }
+		
+		/* Switch styles for Activate Drops check */
+		.switch-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; background-color: #242427; padding: 15px; border-radius: 6px; border: 1px solid #3f3f46; }
+		.switch-label { font-weight: bold; font-size: 14px; color: #e4e4e7; }
+		.switch { position: relative; display: inline-block; width: 50px; height: 26px; }
+		.switch input { opacity: 0; width: 0; height: 0; }
+		.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #3f3f46; transition: .3s; border-radius: 34px; }
+		.slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 4px; bottom: 4px; background-color: white; transition: .3s; border-radius: 50%; }
+		input:checked + .slider { background-color: #9146ff; }
+		input:checked + .slider:before { transform: translateX(24px); }
+		input:disabled + .slider { background-color: #242427; border: 1px solid #2d2d30; cursor: not-allowed; }
+		input:disabled + .slider:before { background-color: #3f3f46; }
+
+		/* Campaigns list styles */
+		.campaign-item { background-color: #242427; border: 1px solid #3f3f46; border-radius: 6px; padding: 18px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }
+		.campaign-details { flex-grow: 1; margin-right: 20px; }
+		.campaign-title { font-size: 16px; font-weight: bold; color: #f0f0f0; margin-bottom: 4px; }
+		.campaign-meta { font-size: 12px; color: #adadb8; margin-bottom: 8px; display: flex; gap: 15px; }
+		.campaign-channels { font-size: 13px; color: #e4e4e7; }
+		.campaign-channels strong { color: #a970ff; }
+		.progress-text { font-size: 12px; color: #2ecc71; font-weight: bold; margin-top: 6px; }
+		.no-campaigns { text-align: center; color: #adadb8; padding: 20px; font-style: italic; }
+
+		.help-link { display: inline-block; color: #adadb8; font-size: 12px; text-decoration: none; }
+		.help-link:hover { color: #a970ff; text-decoration: underline; }
+		.connection-status { padding: 12px; border-radius: 6px; font-size: 14px; font-weight: bold; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; }
+		.connection-offline { background-color: rgba(235, 4, 0, 0.1); border: 1px solid rgba(235, 4, 0, 0.3); color: #ff6b6b; }
+		.connection-online { background-color: rgba(46, 204, 113, 0.1); border: 1px solid rgba(46, 204, 113, 0.3); color: #2ecc71; }
+		.dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; margin-bottom: 25px; }
+		@media (max-width: 768px) { .dashboard-grid { grid-template-columns: 1fr; gap: 15px; } }
+		.chan-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+		.row-num { width: 20px; color: #adadb8; }
+		.icon-btn { padding: 8px 10px; background-color: #27272a; border: 1px solid #3f3f46; color: #adadb8; border-radius: 6px; cursor: pointer; font-size: 12px; }
+		.icon-btn:hover:not(:disabled) { background-color: #3f3f46; color: #fff; }
+		.icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+	</style>
+	<script>
+		const isAuthenticated = "{{.IsAuthenticatedJS}}" === "true";
+
+		async function apiCall(endpoint) {
+			try {
+				const resp = await fetch(endpoint, { method: 'POST' });
+				if (!resp.ok) {
+					alert("Action failed: " + (await resp.text()));
+				}
+			} catch (e) {
+				alert("Network error: " + e.message);
+			}
+		}
+
+		async function testOpenChannel() {
+			const channelInput = document.getElementById('test-channel');
+			const channel = channelInput ? channelInput.value.trim() : "";
+			try {
+				const resp = await fetch('/api/browser/open', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+					body: 'channel=' + encodeURIComponent(channel)
+				});
+				if (!resp.ok) {
+					alert("Action failed: " + (await resp.text()));
+				}
+			} catch (e) {
+				alert("Network error: " + e.message);
+			}
+		}
+
+		function formatTime(seconds) {
+			if (!seconds) return '0s';
+			const h = Math.floor(seconds / 3600);
+			const m = Math.floor((seconds % 3600) / 60);
+			const s = seconds % 60;
+			let res = '';
+			if (h > 0) res += h + 'h ';
+			if (m > 0) res += m + 'm ';
+			if (s > 0 || res === '') res += s + 's';
+			return res.trim();
+		}
+
+		async function toggleDrops(checkbox) {
+			if (!isAuthenticated) return;
+			const active = checkbox.checked ? 'on' : 'off';
+			try {
+				await fetch('/api/drops/toggle', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+					body: 'active=' + encodeURIComponent(active)
+				});
+			} catch (e) {
+				console.error("Failed to toggle drops check", e);
+			}
+		}
+
+		async function toggleAutoWatch(campaignName, isWatching) {
+			if (!isAuthenticated) return;
+			const action = isWatching ? 'stop' : 'start';
+			const btn = document.getElementById('btn-' + btoa(unescape(encodeURIComponent(campaignName))).replace(/=/g, ''));
+			if (btn) {
+				btn.disabled = true;
+				btn.innerText = action === 'start' ? 'Launching...' : 'Stopping...';
+			}
+
+			try {
+				const res = await fetch('/api/drops/auto', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+					body: `campaign=${encodeURIComponent(campaignName)}&action=${action}`
+				});
+				if (!res.ok) {
+					const text = await res.text();
+					alert("Failed to auto-watch: " + text);
+				}
+			} catch (e) {
+				console.error("Failed to toggle auto watch", e);
+				alert("Error: " + e.message);
+			}
+		}
+
+		// Monitored channels editor (priority order)
+		const MAX_CHANNELS = 5;
+		let channelEdits = [];
+		let channelsDirty = false;
+
+		function renderChannelRows() {
+			const container = document.getElementById('channel-rows');
+			if (!container) return;
+
+			let html = '';
+			channelEdits.forEach((login, i) => {
+				const escaped = login.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+				html += `
+					<div class="chan-row">
+						<span class="row-num">${i + 1}</span>
+						<input type="text" value="${escaped}" oninput="editChannel(${i}, this.value)" ${isAuthenticated ? "" : "disabled"} style="padding: 8px;">
+						<button type="button" class="icon-btn" onclick="moveChannel(${i}, -1)" ${i === 0 || !isAuthenticated ? "disabled" : ""}>▲</button>
+						<button type="button" class="icon-btn" onclick="moveChannel(${i}, 1)" ${i === channelEdits.length - 1 || !isAuthenticated ? "disabled" : ""}>▼</button>
+						<button type="button" class="icon-btn" onclick="removeChannel(${i})" ${isAuthenticated ? "" : "disabled"}>✕</button>
+					</div>`;
+			});
+			container.innerHTML = html;
+
+			const addBtn = document.getElementById('add-channel-btn');
+			if (addBtn) {
+				addBtn.disabled = !isAuthenticated || channelEdits.length >= MAX_CHANNELS;
+			}
+		}
+
+		function markChannelsDirty() { channelsDirty = true; }
+		function editChannel(i, val) { channelEdits[i] = val; markChannelsDirty(); }
+		function moveChannel(i, dir) {
+			const j = i + dir;
+			if (j < 0 || j >= channelEdits.length) return;
+			const tmp = channelEdits[i];
+			channelEdits[i] = channelEdits[j];
+			channelEdits[j] = tmp;
+			markChannelsDirty();
+			renderChannelRows();
+		}
+		function removeChannel(i) {
+			channelEdits.splice(i, 1);
+			markChannelsDirty();
+			renderChannelRows();
+		}
+		function addChannel() {
+			if (channelEdits.length >= MAX_CHANNELS) return;
+			channelEdits.push('');
+			markChannelsDirty();
+			renderChannelRows();
+		}
+		function clearChannels() {
+			channelEdits = [];
+			renderChannelRows();
+			saveChannels();
+		}
+		function seedChannels(channels) {
+			channelEdits = (channels || []).map(c => c.login);
+			channelsDirty = false;
+			renderChannelRows();
+		}
+		async function saveChannels() {
+			const logins = channelEdits.map(l => l.trim()).filter(l => l !== '');
+			try {
+				const resp = await fetch('/api/channels', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ channels: logins })
+				});
+				if (!resp.ok) {
+					alert("Failed to save channels: " + (await resp.text()));
+					return;
+				}
+				const data = await resp.json();
+				seedChannels(data.channels);
+			} catch (e) {
+				alert("Network error: " + e.message);
+			}
+		}
+
+		renderChannelRows();
+
+		function renderCampaigns(campaigns, autoCampaign) {
+			const listContainer = document.getElementById('campaigns-list');
+			if (!listContainer) return;
+
+			if (!campaigns || campaigns.length === 0) {
+				listContainer.innerHTML = '<div class="no-campaigns">No active drop campaigns found for this game category.</div>';
+				return;
+			}
+
+			let html = '';
+			campaigns.forEach(c => {
+				const isWatching = (autoCampaign === c.name);
+				const btnText = isWatching ? 'Watching (Click to Stop)' : 'Auto Watch';
+				const btnClass = isWatching ? 'btn btn-success' : 'btn';
+				const btnId = 'btn-' + btoa(unescape(encodeURIComponent(c.name))).replace(/=/g, '');
+				const progressHtml = c.watch_time > 0 ? `<div class="progress-text">Session Watch Time: ${formatTime(c.watch_time)}</div>` : '';
+				
+				let channelsHtml = '';
+				if (c.channels && c.channels.length === 1 && c.channels[0] === 'all') {
+					channelsHtml = 'All Channels';
+				} else if (c.channels) {
+					channelsHtml = c.channels.join(', ');
+				}
+
+				html += `
+					<div class="campaign-item">
+						<div class="campaign-details">
+							<div class="campaign-title">${c.name}</div>
+							<div class="campaign-meta">
+								<span>📅 ${c.dates}</span>
+							</div>
+							<div class="campaign-channels"><strong>Streams:</strong> ${channelsHtml}</div>
+							${progressHtml}
+						</div>
+						<button id="${btnId}" class="${btnClass}" onclick="toggleAutoWatch('${c.name.replace(/'/g, "\\'")}', ${isWatching})" ${isAuthenticated ? "" : "disabled"}>
+							${btnText}
+						</button>
+					</div>
+				`;
+			});
+
+			listContainer.innerHTML = html;
+		}
+
+		// Main polling loop (always running to support scraper testing)
+		setInterval(async () => {
+			try {
+				const res = await fetch('/api/status');
+				const data = await res.json();
+				
+				// Handle login or logout state changes dynamically by reloading once
+				if (data.authenticated !== isAuthenticated) {
+					window.location.reload();
+					return;
+				}
+				
+				// Update monitored channel status list
+				const chanStatus = document.getElementById('chan-status');
+				if (chanStatus) {
+					const chs = data.channels || [];
+					if (chs.length === 0) {
+						chanStatus.innerHTML = '<div class="status-offline" style="font-size: 14px;">No channels monitored.</div>';
+					} else {
+						let html = '';
+						chs.forEach((c, i) => {
+							const badge = c.live ? '<span class="status-live">LIVE</span>' : '<span class="status-offline">offline</span>';
+							const watching = (c.login === data.current) ? '<span class="status-active">▶ watching</span>' : '';
+							html += `<div style="display: flex; gap: 10px; align-items: center; margin-bottom: 6px;"><span class="row-num">${i + 1}.</span><span>${c.login}</span>${badge}${watching}</div>`;
+						});
+						chanStatus.innerHTML = html;
+					}
+				}
+
+				if (!channelsDirty) {
+					seedChannels(data.channels);
+				}
+
+					const browserBox = document.getElementById('browser-val');
+					browserBox.innerText = data.browser_open ? 'Active (Stream Open)' : 'Closed';
+					browserBox.className = 'stat-val ' + (data.browser_open ? 'status-active' : 'status-offline');
+
+					// Update drops settings & list
+					const activeGameDisplay = document.getElementById('active-game-val');
+					if (activeGameDisplay) {
+						activeGameDisplay.innerText = data.game_name || 'None';
+					}
+
+					const dropsCheckbox = document.getElementById('drops-checkbox');
+					if (dropsCheckbox && !dropsCheckbox.dataset.userInteracted) {
+						dropsCheckbox.checked = data.drops_active;
+					}
+
+					renderCampaigns(data.campaigns, data.auto_campaign);
+				} catch (e) {
+					console.error("Failed to poll status", e);
+				}
+			}, 3000);
+	</script>
+</head>
+<body>
+	<div class="navbar">
+		<h1>AutoTTV Dashboard</h1>
+	</div>
+
+	<div class="container">
+		<!-- Twitch Connection Card -->
+		<div class="card">
+			<h2>Twitch API Connection</h2>
+			<div id="setup-section" style="display: {{.SetupDisplay}};">
+				<div class="connection-status connection-offline">⚠️ Disconnected: Twitch OAuth credentials required</div>
+				<p style="color: #adadb8; font-size: 13px; line-height: 1.6; margin-bottom: 20px;">
+					Please enter your Twitch Developer credentials. This is a local desktop application; your credentials never leave your machine.
+				</p>
+				<form action="/api/setup" method="POST" class="form-inline" style="flex-wrap: wrap; gap: 15px;">
+					<input type="text" id="client_id" name="client_id" required placeholder="Enter Twitch Client ID" style="max-width: 250px;" value="{{.ClientId}}">
+					<input type="password" id="client_secret" name="client_secret" required placeholder="Enter Twitch Client Secret" style="max-width: 250px;" value="{{.ClientSecret}}">
+					<button type="submit" class="btn">Connect with Twitch</button>
+				</form>
+				<div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+					<a href="https://dev.twitch.tv/console" target="_blank" class="help-link">How do I get these credentials? (Register an App on Twitch Console)</a>
+				</div>
+				<div style="margin-top: 20px; border-top: 1px dashed #3f3f46; padding-top: 15px; display: {{.SetupClearDisplay}}; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+					<span style="color: #adadb8; font-size: 13px;">Wipe existing keys from OS secure storage and start fresh:</span>
+					<form action="/api/logout" method="POST" style="margin: 0;">
+						<button type="submit" class="btn btn-danger">Wipe Stored Keys</button>
+					</form>
+				</div>
+			</div>
+			
+			<div id="connected-section" style="display: {{.ConnectedDisplay}};">
+				<div class="connection-status connection-online">✅ Connected to Twitch API securely via OAuth</div>
+				<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+					<span style="color: #adadb8; font-size: 13px;">Wipe keys and disconnect to switch accounts:</span>
+					<form action="/api/logout" method="POST" style="margin: 0;">
+						<button type="submit" class="btn btn-secondary">Logout / Clear Keys</button>
+					</form>
+				</div>
+			</div>
+		</div>
+
+		<!-- Second Row: Grid for Status Monitoring and Channel Update -->
+		<div class="dashboard-grid" style="opacity: {{.FeaturesOpacity}}; margin-top: 25px;">
+			<!-- Stream Status Card -->
+			<div class="card" style="margin-bottom: 0;">
+				<h2>Current Monitoring Status</h2>
+				<div class="stat-box" style="padding: 12px; margin-bottom: 15px; text-align: left;">
+					<div class="stat-label">Monitored Channels</div>
+					<div id="chan-status" style="font-size: 14px; margin-top: 8px;"></div>
+				</div>
+				<div class="stat-box" style="padding: 12px;">
+					<div class="stat-label">Stream Browser Window</div>
+					<div class="stat-val {{.BrowserStatusClass}}" id="browser-val" style="font-size: 18px;">{{.BrowserStatusText}}</div>
+				</div>
+			</div>
+
+			<!-- Monitored Channels Card -->
+			<div class="card" style="margin-bottom: 0; display: flex; flex-direction: column;">
+				<h2>Monitored Channels (priority order)</h2>
+				<p style="color: #adadb8; font-size: 13px; line-height: 1.6; margin-bottom: 15px;">
+					Streams are watched in the order listed — the first live channel wins. Twitch allows at most 5 monitored channels per account.
+				</p>
+				<div id="channel-rows" style="margin-bottom: 15px;"></div>
+				<div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: auto;">
+					<button type="button" id="add-channel-btn" class="btn btn-secondary" onclick="addChannel()" {{.DisabledAttr}}>+ Add Channel</button>
+					<button type="button" id="save-channels-btn" class="btn" onclick="saveChannels()" {{.DisabledAttr}}>Save</button>
+					<button type="button" class="btn btn-secondary" onclick="clearChannels()" {{.DisabledAttr}}>Clear All</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- Third Row: Game Drops Watcher & Campaigns (Spacious Full Width) -->
+		<div class="card" style="opacity: {{.FeaturesOpacity}}; margin-top: 25px;">
+			<h2>Game Drops Watcher</h2>
+			
+			<form action="/api/drops/game" method="POST" class="form-inline" style="margin-bottom: 20px;">
+				<input type="text" name="game" required placeholder="Game Category Name (e.g., Overwatch 2)" value="{{.GameName}}">
+				<button type="submit" class="btn">Set Active Game</button>
+				<button type="submit" formaction="/api/drops/game/clear" class="btn btn-secondary" formnovalidate {{.ClearDisabledAttr}}>Clear Game</button>
+			</form>
+
+			<div class="switch-row" style="margin-bottom: 25px;">
+				<span class="switch-label">Activate Drop Monitoring for <span id="active-game-val" style="color:#a970ff;">{{.GameName}}</span></span>
+				<label class="switch">
+					<input type="checkbox" id="drops-checkbox" onchange="toggleDrops(this)" onclick="this.dataset.userInteracted=true">
+					<span class="slider"></span>
+				</label>
+			</div>
+
+			<h2>Active Campaigns</h2>
+			<div id="campaigns-list">
+				<div class="no-campaigns">Activate drop monitoring to see campaigns.</div>
+			</div>
+		</div>
+
+		<!-- Bottom Row: Dedicated Developer & Testing Controls Spot -->
+		<div class="card" style="margin-top: 25px;">
+			<h2>Developer & Testing Controls</h2>
+			<p style="color: #adadb8; font-size: 13px; line-height: 1.6; margin-bottom: 15px;">
+				Manually simulate triggers. Enter a channel name to test launching a stream window on a real player.
+			</p>
+			
+			<div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+				<input type="text" id="test-channel" placeholder="Enter Channel for Testing (e.g., shroud)" style="max-width: 300px; padding: 11px;">
+				<button class="btn btn-secondary" onclick="testOpenChannel()" style="max-width: 180px;">Test Launch Stream</button>
+				<button class="btn btn-danger" onclick="apiCall('/api/browser/close')" style="max-width: 180px;">Test Close Stream</button>
+				
+				<div style="margin-left: auto;">
+					<a href="/browser-test" class="btn btn-secondary" style="font-size: 13px; padding: 10px 15px; display: inline-block; border-radius: 6px;">🔑 Setup Browser Login</a>
+				</div>
+			</div>
+		</div>
+	</div>
+</body>
+</html>
