@@ -28,11 +28,19 @@ AutoTTV talks to Twitch with your own API credentials, so you need a (free) deve
 If you run AutoTTV on a different port (`-port 8080`), register `http://localhost:8080/callback` instead.
 
 ### 2. Build and run
+Requires Go 1.25 or newer.x
 
-Requires Go 1.25 or newer.
+If `make` command is avaliable:
+* Open terminal and run `make`
+    * by default it will build for local environment
+        * Apple Silicon has not been tested
 
+To build using `go build`:
 ```bash
 go build -trimpath -ldflags="-s -w" -o autottv ./cmd/autottv   # add .exe on Windows
+```
+To run:
+```bash
 ./autottv            # dashboard on http://localhost:3000
 ./autottv -port 8080 # custom port
 ```
