@@ -75,7 +75,7 @@ func (m *ProcessManager) OpenStream(streamURL string) error {
 		args = []string{streamURL}
 	}
 	cmd := exec.Command(browserPath, args...)
-	
+
 	// Ensure the process starts in a new process group
 	setProcessGroup(cmd)
 

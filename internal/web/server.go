@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -284,7 +285,10 @@ func (s *Server) applyAction(a monitor.Action) {
 // loadChannels resolves logins to monitor channels (with live status), applies
 // the result, and notifies the main loop. Used by Start and handleCallback.
 func (s *Server) loadChannels(client *twitch.Client, logins []string) (unknown []string, err error) {
-	logins = normalizeLogins(logins)
+	logins, err = normalizeLogins(logins)
+	if err != nil {
+		return nil, err
+	}
 	if len(logins) > monitor.MaxChannels {
 		return nil, fmt.Errorf("a maximum of %d channels can be monitored", monitor.MaxChannels)
 	}
@@ -343,7 +347,7 @@ func (s *Server) applyChannels(chs []monitor.Channel) {
 }
 
 // normalizeLogins trims, lowercases, drops empties, and dedupes preserving first occurrence.
-func normalizeLogins(logins []string) []string {
+func normalizeLogins(logins []string) ([]string, error) {
 	seen := make(map[string]bool, len(logins))
 	out := make([]string, 0, len(logins))
 	for _, l := range logins {
@@ -351,10 +355,13 @@ func normalizeLogins(logins []string) []string {
 		if l == "" || seen[l] {
 			continue
 		}
+		if !loginRe.MatchString(l) {
+			return nil, fmt.Errorf("invalid channel name: %q", l)
+		}
 		seen[l] = true
 		out = append(out, l)
 	}
-	return out
+	return out, nil
 }
 
 func (s *Server) handleBrowserTest(w http.ResponseWriter, r *http.Request) {
@@ -369,8 +376,12 @@ func (s *Server) handleBrowserOpen(w http.ResponseWriter, r *http.Request) {
 	}
 
 	targetURL := "https://twitch.tv"
-	channel := r.FormValue("channel")
+	channel := strings.ToLower(strings.TrimSpace(r.FormValue("channel")))
 	if channel != "" {
+		if !loginRe.MatchString(channel) {
+			http.Error(w, "invalid channel name", http.StatusBadRequest)
+			return
+		}
 		targetURL = "https://twitch.tv/" + channel
 	}
 
@@ -570,7 +581,11 @@ func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logins := normalizeLogins(body.Channels)
+	logins, err := normalizeLogins(body.Channels)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if len(logins) > monitor.MaxChannels {
 		http.Error(w, fmt.Sprintf("a maximum of %d channels can be monitored", monitor.MaxChannels), http.StatusBadRequest)
 		return
@@ -587,7 +602,6 @@ func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 
 	var chs []monitor.Channel
 	var unknown []string
-	var err error
 	if len(logins) > 0 {
 		chs, unknown, err = s.resolveChannels(client, logins)
 		if err != nil {
@@ -1025,6 +1039,8 @@ func (s *Server) persistSettings() {
 var dashboardHTML string
 
 var dashboardTmpl = template.Must(template.New("dashboard").Parse(dashboardHTML))
+
+var loginRe = regexp.MustCompile(`^[a-z0-9_]{1,25}$`)
 
 type dashboardData struct {
 	IsAuthenticated bool
