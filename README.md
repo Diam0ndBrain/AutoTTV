@@ -1,6 +1,6 @@
 # AutoTTV
 
-AutoTTV is a small Go desktop utility that watches a prioritized list of Twitch channels and keeps a browser window open on whichever one is live, so you can collect drops and channel points without sitting at the computer. When nothing you care about is live, the window is closed.
+AutoTTV is a small Go desktop utility that watches a prioritized list of Twitch channels and keeps a browser window open on whichever one is live. When nothing you care about is live, the window is closed.
 
 Everything is configured from a local web dashboard at `http://localhost:3000`.
 
@@ -15,6 +15,20 @@ Everything is configured from a local web dashboard at `http://localhost:3000`.
 
 Twitch EventSub caps each user token at a total subscription "cost" of 10. Watching a channel you don't own needs two subscriptions (`stream.online` and `stream.offline`) at a cost of 1 each, so 5 channels is the hard limit the API allows.
 
+## Browser setup
+
+AutoTTV pairs well with extension [BetterTTV](https://chromewebstore.google.com/detail/betterttv/ajopnjidmegmdimjlfnijceegpefgped). Once `BetterTTV` extension is installed, you can configure it to auto claim channel points and drops.  
+Next it is a good idea to set the browser to not limit any audio. Occasionally in testing twitch would auto open, but it would be muted. This was resolved with changing some settings in Chrome. Those settings are:
+1. Settings
+2. Privacy and Security
+3. Site Settings
+4. Click on the `View permissions and data stored across sites` option
+5. Find `Twitch.tv` and expand the options
+6. In the list find `www.twitch.tv`
+    * make sure *not* to click on `auth.twitch.tv` or `dashboard.twitch.tv`
+7. Find the `Sound` option in the list
+8. Change to `allow`
+
 ## Setup
 
 ### 1. Register a Twitch application
@@ -28,6 +42,7 @@ AutoTTV talks to Twitch with your own API credentials, so you need a (free) deve
 If you run AutoTTV on a different port (`-port 8080`), register `http://localhost:8080/callback` instead.
 
 ### 2. Build and run
+
 Requires Go 1.25 or newer.x
 
 If `make` command is avaliable:
