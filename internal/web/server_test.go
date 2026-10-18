@@ -145,3 +145,214 @@ func TestOnStreamEventsReconcile(t *testing.T) {
 		t.Fatalf("Current = %q, want c2 unchanged", got)
 	}
 }
+
+func doRoutes(s *Server, req *http.Request) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	return w
+}
+
+func TestDashboardDoesNotLeakSecret(t *testing.T) {
+	s := newTestServer()
+	s.clientId = "myid"
+	s.clientSecret = "supersecretvalue"
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:5555"
+	w := httptest.NewRecorder()
+	s.handleDashboard(w, req)
+
+	body := w.Body.String()
+	if strings.Contains(body, "supersecretvalue") {
+		t.Fatal("dashboard body contains the client secret")
+	}
+	if !strings.Contains(body, "myid") {
+		t.Fatal("dashboard body does not contain the client ID")
+	}
+	if !strings.Contains(body, "Reconnect with Twitch") {
+		t.Fatal("dashboard body does not contain 'Reconnect with Twitch'")
+	}
+}
+
+func TestDashboardEscapesGameName(t *testing.T) {
+	s := newTestServer()
+	s.gameName = `"><script>alert(1)</script>`
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:5555"
+	w := httptest.NewRecorder()
+	s.handleDashboard(w, req)
+
+	body := w.Body.String()
+	if strings.Contains(body, "<script>alert(1)</script>") {
+		t.Fatal("dashboard body contains unescaped game name")
+	}
+	if !strings.Contains(body, "&lt;script&gt;") && !strings.Contains(body, `\x3cscript`) && !strings.Contains(body, "&#60;script&#62;") {
+		t.Fatal("dashboard body does not contain an escaped form of the game name")
+	}
+}
+
+func TestDashboardRemoteHidesSetupForm(t *testing.T) {
+	s := newTestServer()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "192.168.1.50:1234"
+	w := httptest.NewRecorder()
+	s.handleDashboard(w, req)
+
+	body := w.Body.String()
+	if strings.Contains(body, `name="client_secret"`) {
+		t.Fatal("remote dashboard contains the client_secret input")
+	}
+	if !strings.Contains(body, "configured from the host machine") {
+		t.Fatal("remote dashboard does not show the host-machine notice")
+	}
+}
+
+func TestDashboardRemoteAuthenticatedHidesLogout(t *testing.T) {
+	s := newTestServer()
+	s.isAuthenticated = true
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "192.168.1.50:1234"
+	w := httptest.NewRecorder()
+	s.handleDashboard(w, req)
+
+	body := w.Body.String()
+	if strings.Contains(body, `action="/api/logout"`) {
+		t.Fatal("remote dashboard contains a logout form")
+	}
+	if !strings.Contains(body, "only available from the host machine") {
+		t.Fatal("remote authenticated dashboard does not show the host-machine notice")
+	}
+}
+
+func TestHandleSetupReusesStoredSecret(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	s := newTestServer()
+	s.clientId = "id"
+	s.clientSecret = "sec"
+
+	form := url.Values{}
+	form.Set("client_id", "id")
+	req := httptest.NewRequest(http.MethodPost, "/api/setup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.handleSetup(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", w.Code)
+	}
+	if s.clientSecret != "sec" {
+		t.Fatalf("clientSecret = %q, want stored secret preserved", s.clientSecret)
+	}
+	if s.oauthState == "" {
+		t.Fatal("oauthState was not stored")
+	}
+}
+
+func TestHandleSetupRejectsBlankSecret(t *testing.T) {
+	t.Run("nothing stored", func(t *testing.T) {
+		s := newTestServer()
+		form := url.Values{}
+		form.Set("client_id", "id")
+		req := httptest.NewRequest(http.MethodPost, "/api/setup", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		s.handleSetup(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", w.Code)
+		}
+	})
+
+	t.Run("different client id", func(t *testing.T) {
+		s := newTestServer()
+		s.clientId = "id"
+		s.clientSecret = "sec"
+		form := url.Values{}
+		form.Set("client_id", "other")
+		req := httptest.NewRequest(http.MethodPost, "/api/setup", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		s.handleSetup(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", w.Code)
+		}
+	})
+}
+
+func TestLoopbackOnly(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	s := newTestServer()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
+	req.Host = "localhost:3000"
+	req.RemoteAddr = "192.168.1.50:1234"
+	if w := doRoutes(s, req); w.Code != http.StatusForbidden {
+		t.Fatalf("remote status = %d, want 403", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/logout", nil)
+	req.Host = "localhost:3000"
+	req.RemoteAddr = "127.0.0.1:1234"
+	if w := doRoutes(s, req); w.Code == http.StatusForbidden {
+		t.Fatal("loopback request was forbidden")
+	}
+}
+
+func TestHostCheck(t *testing.T) {
+	s := newTestServer()
+
+	for _, tc := range []struct {
+		host string
+		want int
+	}{
+		{"evil.example", http.StatusForbidden},
+		{"192.168.1.20:3000", http.StatusOK},
+		{"localhost:3000", http.StatusOK},
+		{"[::1]:3000", http.StatusOK},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Host = tc.host
+		req.RemoteAddr = "127.0.0.1:1234"
+		if w := doRoutes(s, req); w.Code != tc.want {
+			t.Fatalf("Host %q: status = %d, want %d", tc.host, w.Code, tc.want)
+		}
+	}
+}
+
+func TestSameOriginOnly(t *testing.T) {
+	s := newTestServer()
+	body := `{"channels":["a"]}`
+
+	for _, tc := range []struct {
+		name    string
+		origin  string
+		fetch   string
+		want403 bool
+	}{
+		{"evil origin", "https://evil.example", "", true},
+		{"matching origin", "http://192.168.1.20:3000", "", false},
+		{"no origin", "", "", false},
+		{"cross-site fetch", "", "cross-site", true},
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/channels", strings.NewReader(body))
+		req.Host = "192.168.1.20:3000"
+		req.RemoteAddr = "127.0.0.1:1234"
+		req.Header.Set("Content-Type", "application/json")
+		if tc.origin != "" {
+			req.Header.Set("Origin", tc.origin)
+		}
+		if tc.fetch != "" {
+			req.Header.Set("Sec-Fetch-Site", tc.fetch)
+		}
+		w := doRoutes(s, req)
+		if tc.want403 && w.Code != http.StatusForbidden {
+			t.Fatalf("%s: status = %d, want 403", tc.name, w.Code)
+		}
+		if !tc.want403 && w.Code == http.StatusForbidden {
+			t.Fatalf("%s: status = 403, want non-403", tc.name)
+		}
+	}
+}

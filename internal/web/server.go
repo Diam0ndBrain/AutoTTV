@@ -1,11 +1,14 @@
 package web
 
 import (
+	"bytes"
 	"crypto/rand"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html/template"
+	"net"
 	"net/http"
 	"net/url"
 	"os/exec"
@@ -32,23 +35,23 @@ type Server struct {
 	actionMu     sync.Mutex // serializes browser close/open sequences from applyAction
 
 	// State
-	clientId     string
-	clientSecret string
-	accessToken  string
+	clientId        string
+	clientSecret    string
+	accessToken     string
 	isAuthenticated bool
-	oauthState   string
+	oauthState      string
 
 	// Drops Watcher State
-	gameName        string
-	dropsActive     bool
-	campaigns       []drops.Campaign
-	autoCampaign    string
-	watchStart      time.Time
-	watchTicker     *time.Ticker
-	watchDone       chan struct{}
-	lastScrape      time.Time
-	scrapeTicker    *time.Ticker
-	scrapeDone      chan struct{}
+	gameName     string
+	dropsActive  bool
+	campaigns    []drops.Campaign
+	autoCampaign string
+	watchStart   time.Time
+	watchTicker  *time.Ticker
+	watchDone    chan struct{}
+	lastScrape   time.Time
+	scrapeTicker *time.Ticker
+	scrapeDone   chan struct{}
 
 	// Channels for coordinating updates
 	channelUpdateChan chan struct{}
@@ -107,24 +110,9 @@ func (s *Server) Start() error {
 		}
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handleDashboard)
-	mux.HandleFunc("/browser-test", s.handleBrowserTest)
-	mux.HandleFunc("/callback", s.handleCallback)
-	mux.HandleFunc("/api/setup", s.handleSetup)
-	mux.HandleFunc("/api/channels", s.handleChannels)
-	mux.HandleFunc("/api/logout", s.handleLogout)
-	mux.HandleFunc("/api/status", s.handleStatus)
-	mux.HandleFunc("/api/drops/game", s.handleUpdateGame)
-	mux.HandleFunc("/api/drops/game/clear", s.handleClearGame)
-	mux.HandleFunc("/api/drops/toggle", s.handleToggleDrops)
-	mux.HandleFunc("/api/drops/auto", s.handleAutoWatch)
-	mux.HandleFunc("/api/browser/open", s.handleBrowserOpen)
-	mux.HandleFunc("/api/browser/close", s.handleBrowserClose)
-
 	server := &http.Server{
 		Addr:    ":" + s.port,
-		Handler: mux,
+		Handler: s.routes(),
 	}
 
 	// Open dashboard in default browser on launch
@@ -134,7 +122,82 @@ func (s *Server) Start() error {
 	}()
 
 	fmt.Printf("Starting Web UI Dashboard on http://localhost:%s...\n", s.port)
+	fmt.Printf("Dashboard is also reachable from the LAN at http://<this-machine-ip>:%s; credential setup and logout only work from this machine.\n", s.port)
 	return server.ListenAndServe()
+}
+
+// routes builds the HTTP handler chain for the dashboard.
+func (s *Server) routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", s.handleDashboard)
+	mux.HandleFunc("/browser-test", s.handleBrowserTest)
+	mux.HandleFunc("/callback", loopbackOnly(s.handleCallback))
+	mux.HandleFunc("/api/setup", loopbackOnly(sameOriginOnly(s.handleSetup)))
+	mux.HandleFunc("/api/channels", sameOriginOnly(s.handleChannels))
+	mux.HandleFunc("/api/logout", loopbackOnly(sameOriginOnly(s.handleLogout)))
+	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/drops/game", sameOriginOnly(s.handleUpdateGame))
+	mux.HandleFunc("/api/drops/game/clear", sameOriginOnly(s.handleClearGame))
+	mux.HandleFunc("/api/drops/toggle", sameOriginOnly(s.handleToggleDrops))
+	mux.HandleFunc("/api/drops/auto", sameOriginOnly(s.handleAutoWatch))
+	mux.HandleFunc("/api/browser/open", sameOriginOnly(s.handleBrowserOpen))
+	mux.HandleFunc("/api/browser/close", sameOriginOnly(s.handleBrowserClose))
+	return hostIsLocalOrIP(mux)
+}
+
+// hostIsLocalOrIP rejects requests whose Host header is not localhost or an IP literal.
+func hostIsLocalOrIP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.Trim(host, "[]")
+		if host != "localhost" && net.ParseIP(host) == nil {
+			http.Error(w, "Forbidden: invalid Host header", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// loopbackOnly restricts a handler to requests originating from the host machine.
+func loopbackOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopbackRequest(r) {
+			http.Error(w, "Credential changes are only allowed from the host machine.", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// sameOriginOnly rejects cross-site POST requests via Sec-Fetch-Site/Origin headers.
+func sameOriginOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s := r.Header.Get("Sec-Fetch-Site"); s == "cross-site" || s == "same-site" {
+			http.Error(w, "Forbidden: cross-site request", http.StatusForbidden)
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" {
+			u, err := url.Parse(origin)
+			if err != nil || u.Host != r.Host {
+				http.Error(w, "Forbidden: cross-origin request", http.StatusForbidden)
+				return
+			}
+		}
+		next(w, r)
+	}
+}
+
+// isLoopbackRequest reports whether the request's remote address is a loopback IP.
+func isLoopbackRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // GetChannelUpdateChan returns the channel that notifies of monitored channel updates.
@@ -334,58 +397,24 @@ func (s *Server) handleBrowserClose(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	data := dashboardData{
+		IsAuthenticated: s.isAuthenticated,
+		IsLocal:         isLoopbackRequest(r),
+		HasStoredCreds:  s.clientId != "" && s.clientSecret != "",
+		ClientId:        s.clientId,
+		GameName:        s.gameName,
+		BrowserRunning:  s.browserMgr.IsRunning(),
+		Port:            s.port,
+	}
+	s.mu.Unlock()
 
+	var buf bytes.Buffer
+	if err := dashboardTmpl.Execute(&buf, data); err != nil {
+		http.Error(w, "Failed to render dashboard", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html")
-
-	var isAuthJS, setupDisp, connectedDisp, disabledAttr, featuresOpacity string
-	gameName := s.gameName
-
-	var clearDisabledAttr string
-	if gameName == "" {
-		clearDisabledAttr = "disabled"
-	}
-
-	if s.isAuthenticated {
-		isAuthJS = "true"
-		setupDisp = "none"
-		connectedDisp = "block"
-		disabledAttr = ""
-		featuresOpacity = "1.0"
-	} else {
-		isAuthJS = "false"
-		setupDisp = "block"
-		connectedDisp = "none"
-		disabledAttr = "disabled"
-		featuresOpacity = "0.6"
-	}
-	var setupClearDisp string
-	if s.clientId != "" || s.clientSecret != "" {
-		setupClearDisp = "flex"
-	} else {
-		setupClearDisp = "none"
-	}
-
-	dashboardStr := strings.ReplaceAll(dashboardHTML, "{{.IsAuthenticatedJS}}", isAuthJS)
-	dashboardStr = strings.ReplaceAll(dashboardStr, "{{.SetupDisplay}}", setupDisp)
-	dashboardStr = strings.ReplaceAll(dashboardStr, "{{.ConnectedDisplay}}", connectedDisp)
-	dashboardStr = strings.ReplaceAll(dashboardStr, "{{.DisabledAttr}}", disabledAttr)
-	dashboardStr = strings.ReplaceAll(dashboardStr, "{{.FeaturesOpacity}}", featuresOpacity)
-	dashboardStr = strings.ReplaceAll(dashboardStr, "{{.GameName}}", gameName)
-	dashboardStr = strings.ReplaceAll(dashboardStr, "{{.ClearDisabledAttr}}", clearDisabledAttr)
-	dashboardStr = strings.ReplaceAll(dashboardStr, "{{.ClientId}}", s.clientId)
-	dashboardStr = strings.ReplaceAll(dashboardStr, "{{.ClientSecret}}", s.clientSecret)
-	dashboardStr = strings.ReplaceAll(dashboardStr, "{{.SetupClearDisplay}}", setupClearDisp)
-
-	if s.browserMgr.IsRunning() && s.isAuthenticated {
-		dashboardStr = strings.ReplaceAll(dashboardStr, "{{.BrowserStatusClass}}", "status-active")
-		dashboardStr = strings.ReplaceAll(dashboardStr, "{{.BrowserStatusText}}", "Active (Stream Window Open)")
-	} else {
-		dashboardStr = strings.ReplaceAll(dashboardStr, "{{.BrowserStatusClass}}", "status-offline")
-		dashboardStr = strings.ReplaceAll(dashboardStr, "{{.BrowserStatusText}}", "Closed")
-	}
-
-	w.Write([]byte(dashboardStr))
+	w.Write(buf.Bytes())
 }
 
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
@@ -397,8 +426,20 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	clientId := r.FormValue("client_id")
 	clientSecret := r.FormValue("client_secret")
 
-	if clientId == "" || clientSecret == "" {
-		http.Error(w, "Client ID and Client Secret are required", http.StatusBadRequest)
+	if clientId == "" {
+		http.Error(w, "Client ID is required", http.StatusBadRequest)
+		return
+	}
+
+	if clientSecret == "" {
+		s.mu.Lock()
+		canReuse := clientId == s.clientId && s.clientSecret != ""
+		s.mu.Unlock()
+		if !canReuse {
+			http.Error(w, "Client Secret is required", http.StatusBadRequest)
+			return
+		}
+		s.startOAuth(w, r, clientId)
 		return
 	}
 
@@ -410,7 +451,11 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	// Store them temporarily in keyring (StartOAuthFlow will permanently save them on success)
 	_ = auth.SaveCredentials(clientId, clientSecret, "")
 
-	// Redirect user to start Twitch OAuth Login
+	s.startOAuth(w, r, clientId)
+}
+
+// startOAuth generates the OAuth state and redirects to the Twitch authorize URL.
+func (s *Server) startOAuth(w http.ResponseWriter, r *http.Request, clientId string) {
 	redirectURI := fmt.Sprintf("http://localhost:%s/callback", s.port)
 	stateBytes := make([]byte, 16)
 	if _, err := rand.Read(stateBytes); err != nil {
@@ -915,7 +960,7 @@ func (s *Server) startWatchTicker(campaignName string) {
 					s.stopWatchTicker()
 					return
 				}
-				
+
 				// Increment watch time of the active campaign
 				now := time.Now()
 				elapsed := int(now.Sub(lastTick).Seconds())
@@ -978,6 +1023,18 @@ func (s *Server) persistSettings() {
 
 //go:embed dashboard.html
 var dashboardHTML string
+
+var dashboardTmpl = template.Must(template.New("dashboard").Parse(dashboardHTML))
+
+type dashboardData struct {
+	IsAuthenticated bool
+	IsLocal         bool
+	HasStoredCreds  bool
+	ClientId        string
+	GameName        string
+	BrowserRunning  bool
+	Port            string
+}
 
 //go:embed browser_test.html
 var browserTestHTML string

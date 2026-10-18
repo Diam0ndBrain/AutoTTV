@@ -67,7 +67,7 @@
 		.icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 	</style>
 	<script>
-		const isAuthenticated = "{{.IsAuthenticatedJS}}" === "true";
+		const isAuthenticated = {{.IsAuthenticated}};
 
 		async function apiCall(endpoint) {
 			try {
@@ -338,40 +338,50 @@
 		<!-- Twitch Connection Card -->
 		<div class="card">
 			<h2>Twitch API Connection</h2>
-			<div id="setup-section" style="display: {{.SetupDisplay}};">
+			<div id="setup-section" style="display: {{if .IsAuthenticated}}none{{else}}block{{end}};">
 				<div class="connection-status connection-offline">⚠️ Disconnected: Twitch OAuth credentials required</div>
 				<p style="color: #adadb8; font-size: 13px; line-height: 1.6; margin-bottom: 20px;">
 					Please enter your Twitch Developer credentials. This is a local desktop application; your credentials never leave your machine.
 				</p>
+				{{if .IsLocal}}
 				<form action="/api/setup" method="POST" class="form-inline" style="flex-wrap: wrap; gap: 15px;">
 					<input type="text" id="client_id" name="client_id" required placeholder="Enter Twitch Client ID" style="max-width: 250px;" value="{{.ClientId}}">
-					<input type="password" id="client_secret" name="client_secret" required placeholder="Enter Twitch Client Secret" style="max-width: 250px;" value="{{.ClientSecret}}">
-					<button type="submit" class="btn">Connect with Twitch</button>
+					<input type="password" id="client_secret" name="client_secret" placeholder="{{if .HasStoredCreds}}Stored secret will be reused — leave blank or enter a new one{{else}}Enter Twitch Client Secret{{end}}" style="max-width: 250px;">
+					<button type="submit" class="btn">{{if .HasStoredCreds}}Reconnect with Twitch{{else}}Connect with Twitch{{end}}</button>
 				</form>
 				<div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
 					<a href="https://dev.twitch.tv/console" target="_blank" class="help-link">How do I get these credentials? (Register an App on Twitch Console)</a>
 				</div>
-				<div style="margin-top: 20px; border-top: 1px dashed #3f3f46; padding-top: 15px; display: {{.SetupClearDisplay}}; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+				{{else}}
+				<p style="color: #adadb8; font-size: 13px;">Twitch credentials must be configured from the host machine (open http://localhost:{{.Port}} on the computer running AutoTTV).</p>
+				{{end}}
+				{{if .IsLocal}}
+				<div style="margin-top: 20px; border-top: 1px dashed #3f3f46; padding-top: 15px; display: {{if .HasStoredCreds}}flex{{else}}none{{end}}; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
 					<span style="color: #adadb8; font-size: 13px;">Wipe existing keys from OS secure storage and start fresh:</span>
 					<form action="/api/logout" method="POST" style="margin: 0;">
 						<button type="submit" class="btn btn-danger">Wipe Stored Keys</button>
 					</form>
 				</div>
+				{{end}}
 			</div>
 			
-			<div id="connected-section" style="display: {{.ConnectedDisplay}};">
+			<div id="connected-section" style="display: {{if .IsAuthenticated}}block{{else}}none{{end}};">
 				<div class="connection-status connection-online">✅ Connected to Twitch API securely via OAuth</div>
+				{{if .IsLocal}}
 				<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
 					<span style="color: #adadb8; font-size: 13px;">Wipe keys and disconnect to switch accounts:</span>
 					<form action="/api/logout" method="POST" style="margin: 0;">
 						<button type="submit" class="btn btn-secondary">Logout / Clear Keys</button>
 					</form>
 				</div>
+				{{else}}
+				<p style="color: #adadb8; font-size: 13px; margin-top: 10px;">Logout and credential changes are only available from the host machine (open http://localhost:{{.Port}} on the computer running AutoTTV).</p>
+				{{end}}
 			</div>
 		</div>
 
 		<!-- Second Row: Grid for Status Monitoring and Channel Update -->
-		<div class="dashboard-grid" style="opacity: {{.FeaturesOpacity}}; margin-top: 25px;">
+		<div class="dashboard-grid" style="opacity: {{if .IsAuthenticated}}1.0{{else}}0.6{{end}}; margin-top: 25px;">
 			<!-- Stream Status Card -->
 			<div class="card" style="margin-bottom: 0;">
 				<h2>Current Monitoring Status</h2>
@@ -381,7 +391,7 @@
 				</div>
 				<div class="stat-box" style="padding: 12px;">
 					<div class="stat-label">Stream Browser Window</div>
-					<div class="stat-val {{.BrowserStatusClass}}" id="browser-val" style="font-size: 18px;">{{.BrowserStatusText}}</div>
+					<div class="stat-val {{if and .BrowserRunning .IsAuthenticated}}status-active{{else}}status-offline{{end}}" id="browser-val" style="font-size: 18px;">{{if and .BrowserRunning .IsAuthenticated}}Active (Stream Window Open){{else}}Closed{{end}}</div>
 				</div>
 			</div>
 
@@ -393,21 +403,21 @@
 				</p>
 				<div id="channel-rows" style="margin-bottom: 15px;"></div>
 				<div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: auto;">
-					<button type="button" id="add-channel-btn" class="btn btn-secondary" onclick="addChannel()" {{.DisabledAttr}}>+ Add Channel</button>
-					<button type="button" id="save-channels-btn" class="btn" onclick="saveChannels()" {{.DisabledAttr}}>Save</button>
-					<button type="button" class="btn btn-secondary" onclick="clearChannels()" {{.DisabledAttr}}>Clear All</button>
+					<button type="button" id="add-channel-btn" class="btn btn-secondary" onclick="addChannel()" {{if not .IsAuthenticated}}disabled{{end}}>+ Add Channel</button>
+					<button type="button" id="save-channels-btn" class="btn" onclick="saveChannels()" {{if not .IsAuthenticated}}disabled{{end}}>Save</button>
+					<button type="button" class="btn btn-secondary" onclick="clearChannels()" {{if not .IsAuthenticated}}disabled{{end}}>Clear All</button>
 				</div>
 			</div>
 		</div>
 
 		<!-- Third Row: Game Drops Watcher & Campaigns (Spacious Full Width) -->
-		<div class="card" style="opacity: {{.FeaturesOpacity}}; margin-top: 25px;">
+		<div class="card" style="opacity: {{if .IsAuthenticated}}1.0{{else}}0.6{{end}}; margin-top: 25px;">
 			<h2>Game Drops Watcher</h2>
 			
 			<form action="/api/drops/game" method="POST" class="form-inline" style="margin-bottom: 20px;">
 				<input type="text" name="game" required placeholder="Game Category Name (e.g., Overwatch 2)" value="{{.GameName}}">
 				<button type="submit" class="btn">Set Active Game</button>
-				<button type="submit" formaction="/api/drops/game/clear" class="btn btn-secondary" formnovalidate {{.ClearDisabledAttr}}>Clear Game</button>
+				<button type="submit" formaction="/api/drops/game/clear" class="btn btn-secondary" formnovalidate {{if not .GameName}}disabled{{end}}>Clear Game</button>
 			</form>
 
 			<div class="switch-row" style="margin-bottom: 25px;">
