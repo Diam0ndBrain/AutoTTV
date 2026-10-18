@@ -4,6 +4,8 @@ AutoTTV is a small Go desktop utility that watches a prioritized list of Twitch 
 
 Everything is configured from a local web dashboard at `http://localhost:3000`.
 
+The dashboard is also reachable from other devices on your LAN at `http://<host-ip>:3000` for checking status and managing channels. Twitch credential setup and logout only work from the host machine itself, because Twitch requires the OAuth redirect URI to be `localhost`. There is no LAN authentication — only run AutoTTV on a trusted network.
+
 ## What it does
 
 - **Watches up to 5 channels in priority order.** Twitch notifies AutoTTV the moment a stream goes online or offline (EventSub over WebSockets, no polling). The first channel in your list that is live is the one that gets opened. If a higher-priority channel comes online, the current window is closed and the new one opened; if the open channel ends, the next live one takes over.
