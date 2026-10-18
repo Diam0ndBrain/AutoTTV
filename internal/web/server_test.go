@@ -356,3 +356,50 @@ func TestSameOriginOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeLoginsRejectsInvalid(t *testing.T) {
+	for _, in := range []string{"../settings", "foo bar", "a?x=1", strings.Repeat("a", 26)} {
+		if _, err := normalizeLogins([]string{in}); err == nil {
+			t.Fatalf("normalizeLogins(%q) = nil error, want error", in)
+		}
+	}
+	out, err := normalizeLogins([]string{" Foo_Bar1 "})
+	if err != nil {
+		t.Fatalf("normalizeLogins returned error: %v", err)
+	}
+	if len(out) != 1 || out[0] != "foo_bar1" {
+		t.Fatalf("normalizeLogins = %v, want [foo_bar1]", out)
+	}
+}
+
+func TestHandleBrowserOpenRejectsInvalidChannel(t *testing.T) {
+	s := newTestServer()
+
+	form := url.Values{}
+	form.Set("channel", "settings/security")
+	req := httptest.NewRequest(http.MethodPost, "/api/browser/open", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.handleBrowserOpen(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestHandleChannelsRejectsInvalidLogin(t *testing.T) {
+	s := newTestServer()
+
+	body := `{"channels":["bad name"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/channels", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.handleChannels(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "invalid channel name") {
+		t.Fatalf("body = %q, want it to mention 'invalid channel name'", w.Body.String())
+	}
+}
