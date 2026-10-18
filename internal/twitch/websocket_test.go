@@ -415,10 +415,10 @@ func TestWebSocketManager_MultipleBroadcasters(t *testing.T) {
 	}
 
 	want := map[subKey]bool{
-		{"10137", "stream.online"}:   true,
-		{"10137", "stream.offline"}:  true,
-		{"44455", "stream.online"}:   true,
-		{"44455", "stream.offline"}:  true,
+		{"10137", "stream.online"}:  true,
+		{"10137", "stream.offline"}: true,
+		{"44455", "stream.online"}:  true,
+		{"44455", "stream.offline"}: true,
 	}
 	for k := range want {
 		if !got[k] {

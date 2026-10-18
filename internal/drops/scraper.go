@@ -14,7 +14,7 @@ import (
 type Campaign struct {
 	Name         string   `json:"name"`
 	Dates        string   `json:"dates"`
-	EndTS        int64    `json:"end_ts"` // Unix timestamp in milliseconds
+	EndTS        int64    `json:"end_ts"`   // Unix timestamp in milliseconds
 	Channels     []string `json:"channels"` // ["all"] or list of live/monitored channels
 	AutoWatching bool     `json:"auto_watching"`
 	WatchTime    int      `json:"watch_time"` // in seconds

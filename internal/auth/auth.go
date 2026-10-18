@@ -33,13 +33,13 @@ type TokenResponse struct {
 
 // StoredConfig represents the schema for the local secure config file.
 type StoredConfig struct {
-	ClientID         string `json:"client_id,omitempty"`
-	ClientSecret     string `json:"client_secret,omitempty"`
-	RefreshToken     string `json:"refresh_token,omitempty"`
+	ClientID          string   `json:"client_id,omitempty"`
+	ClientSecret      string   `json:"client_secret,omitempty"`
+	RefreshToken      string   `json:"refresh_token,omitempty"`
 	MonitoredChannel  string   `json:"monitored_channel,omitempty"`
 	MonitoredChannels []string `json:"monitored_channels,omitempty"`
-	GameName         string `json:"game_name,omitempty"`
-	DropsActive      bool   `json:"drops_active,omitempty"`
+	GameName          string   `json:"game_name,omitempty"`
+	DropsActive       bool     `json:"drops_active,omitempty"`
 }
 
 // Settings holds non-credential application preferences persisted in the local config.
@@ -268,4 +268,3 @@ func RefreshAccessToken(clientId, clientSecret, refreshToken string) (string, st
 
 	return tokenResp.AccessToken, tokenResp.RefreshToken, nil
 }
-

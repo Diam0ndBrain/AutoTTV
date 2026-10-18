@@ -366,7 +366,7 @@ func (wm *WebSocketManager) handleDisconnect() {
 
 	go func() {
 		time.Sleep(backoff)
-		
+
 		wm.mu.Lock()
 		wm.isReconnecting = false
 		isStop := wm.isStopped()
