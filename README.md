@@ -29,7 +29,7 @@ Next it is a good idea to set the browser to not limit any audio. Occasionally i
 7. Find the `Sound` option in the list
 8. Change to `allow`  
 
-Note: Because `AutoTTV` spawns it's own browser, to keep track of the launched window's PID, you must confiure these settings from the dashboard after `Setup Browser Login` was selected at the bottom of the page. The app will launch a browser window. Here you can login to twitch and configure teh extension and settings.
+Note: Because `AutoTTV` spawns it's own browser, to keep track of the launched window's PID, you must confiure these settings from the dashboard after `Setup Browser Login` was selected at the bottom of the page. The app will launch a browser window. Here you can login to twitch and configure the extension and settings.
 
 ## Setup
 
