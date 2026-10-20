@@ -10,7 +10,7 @@ The dashboard is also reachable from other devices on your LAN at `http://<host-
 
 - **Watches up to 5 channels in priority order.** Twitch notifies AutoTTV the moment a stream goes online or offline (EventSub over WebSockets, no polling). The first channel in your list that is live is the one that gets opened. If a higher-priority channel comes online, the current window is closed and the new one opened; if the open channel ends, the next live one takes over.
 - **Opens a dedicated browser window.** Streams launch in an isolated Chrome/Edge/Firefox window with its own profile, so it never interferes with your normal browsing. On Windows the window is pushed to the foreground so the player actually renders on remote-desktop and headless setups.
-- **Optionally watches drop campaigns for a game.** Pick a game category and AutoTTV lists its active Twitch drop campaigns (scraped from twitchdrops.app). "Auto Watch" opens a random participating stream and tracks how long you've watched. Monitored channels take priority: if one of them goes live, the drops stream is replaced.
+- **Optionally watches drop campaigns for a game.** Pick a game category and AutoTTV lists its active Twitch drop campaigns (scraped from `twitchdrops.app`). "Auto Watch" opens a random participating stream and tracks how long you've watched. Monitored channels take priority: if one of them goes live, the drops stream is replaced.
 - **Keeps your credentials local.** Your Twitch Client ID, Client Secret and refresh token are stored in a `0600` config file under your OS user config directory (`~/.config/autoTtv/credentials.json` on Linux, `%AppData%\autoTtv\credentials.json` on Windows). Nothing is sent anywhere except Twitch.
 
 ### Why only 5 channels?
@@ -31,7 +31,7 @@ Next it is a good idea to set the browser to not limit any audio. Occasionally i
 7. Find the `Sound` option in the list
 8. Change to `allow`  
 
-Note: Because `AutoTTV` spawns it's own browser, to keep track of the launched window's PID, you must confiure these settings from the dashboard after `Setup Browser Login` was selected at the bottom of the page. The app will launch a browser window. Here you can login to twitch and configure the extension and settings.
+Note: Because `AutoTTV` spawns it's own browser, to keep track of the launched window's PID, you must configure these settings from the dashboard after `Setup Browser Login` was selected at the bottom of the page. The app will launch a browser window. Here you can login to twitch and configure the extension and settings.
 
 ## Setup
 
@@ -49,7 +49,7 @@ If you run AutoTTV on a different port (`-port 8080`), register `http://localhos
 
 Requires Go 1.25 or newer.x
 
-If `make` command is avaliable:
+If `make` command is available:
 * Open terminal and run `make`
     * by default it will build for local environment
         * Apple Silicon has not been tested
