@@ -396,19 +396,19 @@ func TestParseChannelLogin(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"shroud", "shroud", false},
-		{"  Shroud  ", "shroud", false},
-		{"https://www.twitch.tv/Shroud", "shroud", false},
-		{"http://twitch.tv/shroud/", "shroud", false},
-		{"twitch.tv/shroud", "shroud", false},
-		{"https://m.twitch.tv/shroud?ref=x", "shroud", false},
-		{"www.twitch.tv/shroud/videos", "shroud", false},
+		{"diam0ndbrain", "diam0ndbrain", false},
+		{"  Diam0ndBrain  ", "diam0ndbrain", false},
+		{"https://www.twitch.tv/Diam0ndBrain", "diam0ndbrain", false},
+		{"http://twitch.tv/diam0ndbrain/", "diam0ndbrain", false},
+		{"twitch.tv/diam0ndbrain", "diam0ndbrain", false},
+		{"https://m.twitch.tv/diam0ndbrain?ref=x", "diam0ndbrain", false},
+		{"www.twitch.tv/diam0ndbrain/videos", "diam0ndbrain", false},
 		{"", "", false},
 		{"https://twitch.tv/", "", true},
-		{"https://youtube.com/shroud", "", true},
+		{"https://youtube.com/diam0ndbrain", "", true},
 		{"https://twitch.tv/bad name", "", true},
 		{"foo/bar", "", true},
-		{"https://nottwitch.tv/shroud", "", true},
+		{"https://nottwitch.tv/diam0ndbrain", "", true},
 	}
 	for _, tc := range cases {
 		got, err := parseChannelLogin(tc.in)
@@ -441,7 +441,7 @@ func TestHandleBrowserOpenRejectsNonTwitchURL(t *testing.T) {
 	s := newTestServer()
 
 	form := url.Values{}
-	form.Set("channel", "https://youtube.com/shroud")
+	form.Set("channel", "https://youtube.com/diam0ndbrain")
 	req := httptest.NewRequest(http.MethodPost, "/api/browser/open", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
