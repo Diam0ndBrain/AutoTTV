@@ -65,9 +65,13 @@
 		.icon-btn { padding: 8px 10px; background-color: #27272a; border: 1px solid #3f3f46; color: #adadb8; border-radius: 6px; cursor: pointer; font-size: 12px; }
 		.icon-btn:hover:not(:disabled) { background-color: #3f3f46; color: #fff; }
 		.icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+		.empty-notice { background-color: rgba(255, 170, 0, 0.08); border: 1px solid rgba(255, 170, 0, 0.35); color: #ffb84d; border-radius: 6px; padding: 12px 14px; font-size: 13px; line-height: 1.5; }
+		.empty-notice strong { display: block; font-size: 14px; margin-bottom: 2px; }
+		code { background: #27272a; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 	</style>
 	<script>
 		const isAuthenticated = {{.IsAuthenticated}};
+		const initialChannels = {{.Channels}};
 
 		async function apiCall(endpoint) {
 			try {
@@ -158,12 +162,15 @@
 			if (!container) return;
 
 			let html = '';
+			if (channelEdits.length === 0) {
+				html = '<div class="no-campaigns" style="padding: 14px; border: 1px dashed #3f3f46; border-radius: 6px;">No channels added yet. Click <strong>+ Add Channel</strong> to start monitoring.</div>';
+			}
 			channelEdits.forEach((login, i) => {
 				const escaped = login.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 				html += `
 					<div class="chan-row">
 						<span class="row-num">${i + 1}</span>
-						<input type="text" value="${escaped}" oninput="editChannel(${i}, this.value)" ${isAuthenticated ? "" : "disabled"} style="padding: 8px;">
+						<input type="text" value="${escaped}" placeholder="channel name or twitch.tv URL" oninput="editChannel(${i}, this.value)" ${isAuthenticated ? "" : "disabled"} style="padding: 8px;">
 						<button type="button" class="icon-btn" onclick="moveChannel(${i}, -1)" ${i === 0 || !isAuthenticated ? "disabled" : ""}>▲</button>
 						<button type="button" class="icon-btn" onclick="moveChannel(${i}, 1)" ${i === channelEdits.length - 1 || !isAuthenticated ? "disabled" : ""}>▼</button>
 						<button type="button" class="icon-btn" onclick="removeChannel(${i})" ${isAuthenticated ? "" : "disabled"}>✕</button>
@@ -228,7 +235,28 @@
 			}
 		}
 
-		renderChannelRows();
+		function renderChannelStatus(chs, current) {
+			const chanStatus = document.getElementById('chan-status');
+			if (!chanStatus) return;
+
+			if (chs.length === 0) {
+				chanStatus.innerHTML = isAuthenticated
+					? '<div class="empty-notice"><strong>⚠️ No channels are being monitored</strong>Nothing will open automatically. Add up to 5 channels in the Monitored Channels panel and click Save.</div>'
+					: '<div class="empty-notice"><strong>⚠️ No channels are being monitored</strong>Connect to Twitch above, then add channels to monitor.</div>';
+				return;
+			}
+
+			let html = '';
+			chs.forEach((c, i) => {
+				const badge = c.live ? '<span class="status-live">LIVE</span>' : '<span class="status-offline">offline</span>';
+				const watching = (c.login === current) ? '<span class="status-active">▶ watching</span>' : '';
+				html += `<div style="display: flex; gap: 10px; align-items: center; margin-bottom: 6px;"><span class="row-num">${i + 1}.</span><span>${c.login}</span>${badge}${watching}</div>`;
+			});
+			chanStatus.innerHTML = html;
+		}
+
+		seedChannels(initialChannels || []);
+		renderChannelStatus(initialChannels || [], null);
 
 		function renderCampaigns(campaigns, autoCampaign) {
 			const listContainer = document.getElementById('campaigns-list');
@@ -287,21 +315,7 @@
 				}
 				
 				// Update monitored channel status list
-				const chanStatus = document.getElementById('chan-status');
-				if (chanStatus) {
-					const chs = data.channels || [];
-					if (chs.length === 0) {
-						chanStatus.innerHTML = '<div class="status-offline" style="font-size: 14px;">No channels monitored.</div>';
-					} else {
-						let html = '';
-						chs.forEach((c, i) => {
-							const badge = c.live ? '<span class="status-live">LIVE</span>' : '<span class="status-offline">offline</span>';
-							const watching = (c.login === data.current) ? '<span class="status-active">▶ watching</span>' : '';
-							html += `<div style="display: flex; gap: 10px; align-items: center; margin-bottom: 6px;"><span class="row-num">${i + 1}.</span><span>${c.login}</span>${badge}${watching}</div>`;
-						});
-						chanStatus.innerHTML = html;
-					}
-				}
+				renderChannelStatus(data.channels || [], data.current);
 
 				if (!channelsDirty) {
 					seedChannels(data.channels);
@@ -399,7 +413,7 @@
 			<div class="card" style="margin-bottom: 0; display: flex; flex-direction: column;">
 				<h2>Monitored Channels (priority order)</h2>
 				<p style="color: #adadb8; font-size: 13px; line-height: 1.6; margin-bottom: 15px;">
-					Streams are watched in the order listed — the first live channel wins. Twitch allows at most 5 monitored channels per account.
+					Enter a channel name (e.g. <code>Diam0ndBrain</code>) or paste a channel URL (e.g. <code>https://twitch.tv/Diam0ndBrain</code>). Streams are watched in the order listed — the first live channel wins. Twitch allows at most 5 monitored channels per account.
 				</p>
 				<div id="channel-rows" style="margin-bottom: 15px;"></div>
 				<div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: auto;">
@@ -442,7 +456,7 @@
 			</p>
 			
 			<div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
-				<input type="text" id="test-channel" placeholder="Enter Channel for Testing (e.g., shroud)" style="max-width: 300px; padding: 11px;">
+				<input type="text" id="test-channel" placeholder="Channel name or URL for testing (e.g., Diam0ndBrain)" style="max-width: 300px; padding: 11px;">
 				<button class="btn btn-secondary" onclick="testOpenChannel()" style="max-width: 180px;">Test Launch Stream</button>
 				<button class="btn btn-danger" onclick="apiCall('/api/browser/close')" style="max-width: 180px;">Test Close Stream</button>
 				

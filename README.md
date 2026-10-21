@@ -76,7 +76,7 @@ The stream window uses its own browser profile, so Twitch doesn't know who you a
 
 ### 5. Add channels
 
-In **Monitored Channels**, add up to 5 channel names, reorder them with the arrows (top = highest priority), and click **Save**. If any of them is already live, a window opens immediately. The list is remembered across restarts.
+In **Monitored Channels**, add up to 5 channels (either a channel name like `Diam0ndBrain` or a channel URL like `https://twitch.tv/Diam0ndBrain`), reorder them with the arrows (top = highest priority), and click **Save**. If any of them is already live, a window opens immediately. The list is remembered across restarts.
 
 ## Dashboard overview
 
