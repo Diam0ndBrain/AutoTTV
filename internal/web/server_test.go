@@ -192,6 +192,24 @@ func TestDashboardEscapesGameName(t *testing.T) {
 	}
 }
 
+func TestDashboardEmbedsInitialChannels(t *testing.T) {
+	s := newTestServer()
+	s.monitor.SetChannels([]monitor.Channel{{Login: "foo", ID: "1"}})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:5555"
+	w := httptest.NewRecorder()
+	s.handleDashboard(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, `"login":"foo"`) {
+		t.Fatal("dashboard body does not contain the embedded channel login")
+	}
+	if !strings.Contains(body, "initialChannels") {
+		t.Fatal("dashboard body does not contain 'initialChannels'")
+	}
+}
+
 func TestDashboardRemoteHidesSetupForm(t *testing.T) {
 	s := newTestServer()
 
@@ -369,6 +387,68 @@ func TestNormalizeLoginsRejectsInvalid(t *testing.T) {
 	}
 	if len(out) != 1 || out[0] != "foo_bar1" {
 		t.Fatalf("normalizeLogins = %v, want [foo_bar1]", out)
+	}
+}
+
+func TestParseChannelLogin(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"shroud", "shroud", false},
+		{"  Shroud  ", "shroud", false},
+		{"https://www.twitch.tv/Shroud", "shroud", false},
+		{"http://twitch.tv/shroud/", "shroud", false},
+		{"twitch.tv/shroud", "shroud", false},
+		{"https://m.twitch.tv/shroud?ref=x", "shroud", false},
+		{"www.twitch.tv/shroud/videos", "shroud", false},
+		{"", "", false},
+		{"https://twitch.tv/", "", true},
+		{"https://youtube.com/shroud", "", true},
+		{"https://twitch.tv/bad name", "", true},
+		{"foo/bar", "", true},
+		{"https://nottwitch.tv/shroud", "", true},
+	}
+	for _, tc := range cases {
+		got, err := parseChannelLogin(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Fatalf("parseChannelLogin(%q) = %q, nil error; want error", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("parseChannelLogin(%q) returned error: %v", tc.in, err)
+		}
+		if got != tc.want {
+			t.Fatalf("parseChannelLogin(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestNormalizeLoginsAcceptsURLs(t *testing.T) {
+	out, err := normalizeLogins([]string{"https://www.twitch.tv/Foo", "foo", " BAR "})
+	if err != nil {
+		t.Fatalf("normalizeLogins returned error: %v", err)
+	}
+	if len(out) != 2 || out[0] != "foo" || out[1] != "bar" {
+		t.Fatalf("normalizeLogins = %v, want [foo bar]", out)
+	}
+}
+
+func TestHandleBrowserOpenRejectsNonTwitchURL(t *testing.T) {
+	s := newTestServer()
+
+	form := url.Values{}
+	form.Set("channel", "https://youtube.com/shroud")
+	req := httptest.NewRequest(http.MethodPost, "/api/browser/open", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.handleBrowserOpen(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
 	}
 }
 

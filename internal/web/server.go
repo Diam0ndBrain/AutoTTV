@@ -351,17 +351,39 @@ func normalizeLogins(logins []string) ([]string, error) {
 	seen := make(map[string]bool, len(logins))
 	out := make([]string, 0, len(logins))
 	for _, l := range logins {
-		l = strings.ToLower(strings.TrimSpace(l))
-		if l == "" || seen[l] {
+		login, err := parseChannelLogin(l)
+		if err != nil {
+			return nil, err
+		}
+		if login == "" || seen[login] {
 			continue
 		}
-		if !loginRe.MatchString(l) {
-			return nil, fmt.Errorf("invalid channel name: %q", l)
-		}
-		seen[l] = true
-		out = append(out, l)
+		seen[login] = true
+		out = append(out, login)
 	}
 	return out, nil
+}
+
+// parseChannelLogin accepts a bare Twitch login or a twitch.tv channel URL
+// and returns the lowercased login.
+func parseChannelLogin(in string) (string, error) {
+	in = strings.TrimSpace(in)
+	if in == "" {
+		return "", nil
+	}
+	raw := in
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	if u, err := url.Parse(raw); err == nil && twitchHostRe.MatchString(strings.ToLower(u.Host)) {
+		segs := strings.Split(strings.Trim(u.Path, "/"), "/")
+		in = segs[0]
+	}
+	login := strings.ToLower(in)
+	if !loginRe.MatchString(login) {
+		return "", fmt.Errorf("invalid channel name or URL: %q", strings.TrimSpace(in))
+	}
+	return login, nil
 }
 
 func (s *Server) handleBrowserTest(w http.ResponseWriter, r *http.Request) {
@@ -376,16 +398,16 @@ func (s *Server) handleBrowserOpen(w http.ResponseWriter, r *http.Request) {
 	}
 
 	targetURL := "https://twitch.tv"
-	channel := strings.ToLower(strings.TrimSpace(r.FormValue("channel")))
-	if channel != "" {
-		if !loginRe.MatchString(channel) {
-			http.Error(w, "invalid channel name", http.StatusBadRequest)
-			return
-		}
-		targetURL = "https://twitch.tv/" + channel
+	login, err := parseChannelLogin(r.FormValue("channel"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if login != "" {
+		targetURL = "https://twitch.tv/" + login
 	}
 
-	err := s.browserMgr.OpenStream(targetURL)
+	err = s.browserMgr.OpenStream(targetURL)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -416,6 +438,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		GameName:        s.gameName,
 		BrowserRunning:  s.browserMgr.IsRunning(),
 		Port:            s.port,
+		Channels:        s.monitor.Channels(),
 	}
 	s.mu.Unlock()
 
@@ -1041,9 +1064,11 @@ var dashboardHTML string
 var dashboardTmpl = template.Must(template.New("dashboard").Parse(dashboardHTML))
 
 var loginRe = regexp.MustCompile(`^[a-z0-9_]{1,25}$`)
+var twitchHostRe = regexp.MustCompile(`^(www\.|m\.)?twitch\.tv(:\d+)?$`)
 
 type dashboardData struct {
 	IsAuthenticated bool
+	Channels        []monitor.Channel
 	IsLocal         bool
 	HasStoredCreds  bool
 	ClientId        string
