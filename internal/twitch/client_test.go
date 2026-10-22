@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"autoTtv/internal/twitch"
@@ -166,6 +167,67 @@ func TestSubscribeEventSub_Success(t *testing.T) {
 	}
 	if subID != "sub-12345" {
 		t.Errorf("expected subID 'sub-12345', got '%s'", subID)
+	}
+}
+
+func TestGetEventSubSubscriptions_Pagination(t *testing.T) {
+	var mu sync.Mutex
+	var afterParams []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/helix/eventsub/subscriptions" {
+			t.Errorf("expected path /helix/eventsub/subscriptions, got %s", r.URL.Path)
+		}
+		if r.Method != "GET" {
+			t.Errorf("expected method GET, got %s", r.Method)
+		}
+		if r.URL.Query().Get("type") != "stream.online" {
+			t.Errorf("expected type=stream.online, got %s", r.URL.Query().Get("type"))
+		}
+
+		mu.Lock()
+		afterParams = append(afterParams, r.URL.Query().Get("after"))
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if r.URL.Query().Get("after") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []map[string]interface{}{
+					{"id": "sub-1", "type": "stream.online"},
+				},
+				"pagination": map[string]interface{}{
+					"cursor": "cursor-abc",
+				},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": []map[string]interface{}{
+				{"id": "sub-2", "type": "stream.online"},
+			},
+			"pagination": map[string]interface{}{
+				"cursor": "",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := twitch.NewClient("dummy-client-id", "dummy-secret", "dummy-token", "dummy-refresh")
+	client.BaseURL = server.URL
+
+	subs, err := client.GetEventSubSubscriptions("stream.online")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(subs) != 2 || subs[0].ID != "sub-1" || subs[1].ID != "sub-2" {
+		t.Errorf("expected [sub-1 sub-2], got %v", subs)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(afterParams) != 2 || afterParams[0] != "" || afterParams[1] != "cursor-abc" {
+		t.Errorf("expected after params ['' 'cursor-abc'], got %v", afterParams)
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +34,13 @@ func TestWebSocketManager_Lifecycle(t *testing.T) {
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/helix/eventsub/subscriptions" {
 			t.Errorf("unexpected API path: %s", r.URL.Path)
+		}
+		if r.Method == "GET" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []interface{}{},
+			})
+			return
 		}
 		if r.Method == "POST" {
 			w.Header().Set("Content-Type", "application/json")
@@ -168,6 +177,13 @@ func TestWebSocketManager_SetBroadcasterID_ClearsSubscriptions(t *testing.T) {
 
 	// 1. Mock EventSub API server
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []interface{}{},
+			})
+			return
+		}
 		if r.Method == "POST" {
 			var body map[string]interface{}
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -333,6 +349,13 @@ func TestWebSocketManager_MultipleBroadcasters(t *testing.T) {
 
 	// 1. Mock EventSub API server
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []interface{}{},
+			})
+			return
+		}
 		if r.Method == "POST" {
 			var body map[string]interface{}
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -424,5 +447,274 @@ func TestWebSocketManager_MultipleBroadcasters(t *testing.T) {
 		if !got[k] {
 			t.Errorf("missing subscription for %v (got %v)", k, got)
 		}
+	}
+}
+
+func TestWebSocketManager_PurgesStaleSubscriptions(t *testing.T) {
+	const sessionID = "session-current"
+
+	var mu sync.Mutex
+	var order []string
+	var deletedIDs []string
+	postsDone := make(chan struct{}, 2)
+
+	record := func(entry string) {
+		mu.Lock()
+		order = append(order, entry)
+		mu.Unlock()
+	}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "GET":
+			record("GET " + r.URL.Query().Get("type"))
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Query().Get("type") == "stream.online" {
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"data": []map[string]interface{}{
+						{
+							"id":   "stale-1",
+							"type": "stream.online",
+							"transport": map[string]interface{}{
+								"method":     "websocket",
+								"session_id": "old-session",
+							},
+						},
+						{
+							"id":   "current-1",
+							"type": "stream.online",
+							"transport": map[string]interface{}{
+								"method":     "websocket",
+								"session_id": sessionID,
+							},
+						},
+						{
+							"id":   "hook-1",
+							"type": "stream.online",
+							"transport": map[string]interface{}{
+								"method": "webhook",
+							},
+						},
+					},
+				})
+			} else {
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"data": []interface{}{},
+				})
+			}
+		case "DELETE":
+			id := r.URL.Query().Get("id")
+			record("DELETE " + id)
+			mu.Lock()
+			deletedIDs = append(deletedIDs, id)
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		case "POST":
+			record("POST")
+			postsDone <- struct{}{}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []map[string]interface{}{
+					{"id": "new-sub"},
+				},
+			})
+		}
+	}))
+	defer apiServer.Close()
+
+	client := twitch.NewClient("dummy-client-id", "dummy-secret", "dummy-token", "dummy-refresh")
+	client.BaseURL = apiServer.URL
+
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("failed to upgrade connection: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		_ = conn.WriteJSON(map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"message_id":        "welcome-msg-id",
+				"message_type":      "session_welcome",
+				"message_timestamp": time.Now().Format(time.RFC3339),
+			},
+			"payload": map[string]interface{}{
+				"session": map[string]interface{}{
+					"id":                        sessionID,
+					"status":                    "connected",
+					"keepalive_timeout_seconds": 10,
+					"connected_at":              time.Now().Format(time.RFC3339),
+				},
+			},
+		})
+
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer wsServer.Close()
+
+	wsURL := strings.Replace(wsServer.URL, "http://", "ws://", 1)
+	wm := twitch.NewWebSocketManager(client, []string{"10137"}, nil, nil)
+	wm.WSURL = wsURL
+
+	if err := wm.Start(); err != nil {
+		t.Fatalf("failed to start WebSocketManager: %v", err)
+	}
+	defer wm.Stop()
+
+	// Wait for both subscription POSTs (stream.online + stream.offline)
+	for i := 0; i < 2; i++ {
+		select {
+		case <-postsDone:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for subscription POST %d of 2", i+1)
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(deletedIDs) != 1 || deletedIDs[0] != "stale-1" {
+		t.Errorf("expected only 'stale-1' to be deleted, got %v", deletedIDs)
+	}
+
+	firstPost := -1
+	firstDelete := -1
+	for i, entry := range order {
+		if entry == "POST" && firstPost == -1 {
+			firstPost = i
+		}
+		if entry == "DELETE stale-1" && firstDelete == -1 {
+			firstDelete = i
+		}
+	}
+	if firstDelete == -1 || firstPost == -1 || firstDelete > firstPost {
+		t.Errorf("expected DELETE of stale sub before first POST, order: %v", order)
+	}
+}
+
+func TestWebSocketManager_ReconnectMigrationKeepsSession(t *testing.T) {
+	var connCountA int32
+	var postCount int32
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "GET":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []interface{}{},
+			})
+		case "POST":
+			atomic.AddInt32(&postCount, 1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []map[string]interface{}{
+					{"id": "sub-1"},
+				},
+			})
+		case "DELETE":
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := twitch.NewClient("dummy-client-id", "dummy-secret", "dummy-token", "dummy-refresh")
+	client.BaseURL = apiServer.URL
+
+	welcome := func(id string) map[string]interface{} {
+		return map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"message_id":        "welcome-" + id,
+				"message_type":      "session_welcome",
+				"message_timestamp": time.Now().Format(time.RFC3339),
+			},
+			"payload": map[string]interface{}{
+				"session": map[string]interface{}{
+					"id":                        id,
+					"status":                    "connected",
+					"keepalive_timeout_seconds": 10,
+					"connected_at":              time.Now().Format(time.RFC3339),
+				},
+			},
+		}
+	}
+
+	// Server B: accepts the migrated connection, re-sends the same session ID.
+	serverB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("failed to upgrade connection on B: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		_ = conn.WriteJSON(welcome("s1"))
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer serverB.Close()
+	wsURLB := strings.Replace(serverB.URL, "http://", "ws://", 1)
+
+	// Server A: sends welcome then a session_reconnect pointing at B.
+	serverA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&connCountA, 1)
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("failed to upgrade connection on A: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		_ = conn.WriteJSON(welcome("s1"))
+		time.Sleep(50 * time.Millisecond)
+		_ = conn.WriteJSON(map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"message_id":        "reconnect-msg-id",
+				"message_type":      "session_reconnect",
+				"message_timestamp": time.Now().Format(time.RFC3339),
+			},
+			"payload": map[string]interface{}{
+				"session": map[string]interface{}{
+					"id":            "s1",
+					"status":        "reconnecting",
+					"reconnect_url": wsURLB,
+					"connected_at":  time.Now().Format(time.RFC3339),
+				},
+			},
+		})
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer serverA.Close()
+
+	wsURLA := strings.Replace(serverA.URL, "http://", "ws://", 1)
+	wm := twitch.NewWebSocketManager(client, []string{"10137"}, nil, nil)
+	wm.WSURL = wsURLA
+
+	if err := wm.Start(); err != nil {
+		t.Fatalf("failed to start WebSocketManager: %v", err)
+	}
+	defer wm.Stop()
+
+	time.Sleep(500 * time.Millisecond)
+
+	if got := atomic.LoadInt32(&connCountA); got != 1 {
+		t.Errorf("expected exactly 1 connection to server A, got %d", got)
+	}
+	if got := atomic.LoadInt32(&postCount); got != 2 {
+		t.Errorf("expected exactly 2 subscription POSTs (no resubscribe after migration), got %d", got)
 	}
 }

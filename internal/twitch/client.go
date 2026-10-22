@@ -278,6 +278,72 @@ func (c *Client) SubscribeEventSub(sessionId, eventType, broadcasterUserId strin
 	return subResp.Data[0].ID, nil
 }
 
+// EventSubSubscription represents an existing EventSub subscription.
+type EventSubSubscription struct {
+	ID        string            `json:"id"`
+	Status    string            `json:"status"`
+	Type      string            `json:"type"`
+	Condition map[string]string `json:"condition"`
+	Transport struct {
+		Method    string `json:"method"`
+		SessionID string `json:"session_id"`
+	} `json:"transport"`
+}
+
+type eventSubSubscriptionsResponse struct {
+	Data       []EventSubSubscription `json:"data"`
+	Pagination struct {
+		Cursor string `json:"cursor"`
+	} `json:"pagination"`
+}
+
+// GetEventSubSubscriptions lists EventSub subscriptions of a given type, following pagination.
+func (c *Client) GetEventSubSubscriptions(eventType string) ([]EventSubSubscription, error) {
+	var subs []EventSubSubscription
+	cursor := ""
+
+	for {
+		q := url.Values{}
+		q.Set("type", eventType)
+		if cursor != "" {
+			q.Set("after", cursor)
+		}
+
+		req, err := http.NewRequest("GET", c.BaseURL+"/helix/eventsub/subscriptions?"+q.Encode(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create eventsub list request: %w", err)
+		}
+
+		c.setHeaders(req)
+
+		resp, err := c.doRequest(req)
+		if err != nil {
+			return nil, fmt.Errorf("eventsub list request failed: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("eventsub list api returned status %d", resp.StatusCode)
+		}
+
+		var listResp eventSubSubscriptionsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to decode eventsub list response: %w", err)
+		}
+		resp.Body.Close()
+
+		subs = append(subs, listResp.Data...)
+
+		if listResp.Pagination.Cursor == "" {
+			break
+		}
+		cursor = listResp.Pagination.Cursor
+	}
+
+	return subs, nil
+}
+
 // UnsubscribeEventSub deletes an active EventSub subscription by ID.
 func (c *Client) UnsubscribeEventSub(subscriptionId string) error {
 	req, err := http.NewRequest("DELETE", c.BaseURL+"/helix/eventsub/subscriptions?id="+subscriptionId, nil)
