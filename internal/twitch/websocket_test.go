@@ -718,3 +718,99 @@ func TestWebSocketManager_ReconnectMigrationKeepsSession(t *testing.T) {
 		t.Errorf("expected exactly 2 subscription POSTs (no resubscribe after migration), got %d", got)
 	}
 }
+
+func TestWebSocketManager_OnResubscribed(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "GET":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []interface{}{},
+			})
+		case "POST":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []map[string]interface{}{
+					{"id": "sub-1"},
+				},
+			})
+		case "DELETE":
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer apiServer.Close()
+
+	client := twitch.NewClient("dummy-client-id", "dummy-secret", "dummy-token", "dummy-refresh")
+	client.BaseURL = apiServer.URL
+
+	var connCount int32
+	secondConn := make(chan struct{})
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&connCount, 1)
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("failed to upgrade connection: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		sessionID := "s1"
+		if n > 1 {
+			sessionID = "s2"
+		}
+		_ = conn.WriteJSON(map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"message_id":        "welcome-msg-id",
+				"message_type":      "session_welcome",
+				"message_timestamp": time.Now().Format(time.RFC3339),
+			},
+			"payload": map[string]interface{}{
+				"session": map[string]interface{}{
+					"id":                        sessionID,
+					"status":                    "connected",
+					"keepalive_timeout_seconds": 10,
+					"connected_at":              time.Now().Format(time.RFC3339),
+				},
+			},
+		})
+
+		if n == 1 {
+			// Drop the first session after the welcome to force a reconnect
+			// onto a brand-new session.
+			time.Sleep(150 * time.Millisecond)
+			return
+		}
+		close(secondConn)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer wsServer.Close()
+
+	var resubCalls int32
+	wsURL := strings.Replace(wsServer.URL, "http://", "ws://", 1)
+	wm := twitch.NewWebSocketManager(client, []string{"10137"}, nil, nil)
+	wm.WSURL = wsURL
+	wm.OnResubscribed = func() { atomic.AddInt32(&resubCalls, 1) }
+
+	if err := wm.Start(); err != nil {
+		t.Fatalf("failed to start WebSocketManager: %v", err)
+	}
+	defer wm.Stop()
+
+	select {
+	case <-secondConn:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for the second session connection")
+	}
+
+	// Give the second session's subscriptions a moment to complete.
+	time.Sleep(300 * time.Millisecond)
+
+	if got := atomic.LoadInt32(&resubCalls); got != 1 {
+		t.Errorf("OnResubscribed calls = %d, want 1 (only the second, new session)", got)
+	}
+}

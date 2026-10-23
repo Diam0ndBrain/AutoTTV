@@ -1,12 +1,15 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"autoTtv/internal/browser"
 	"autoTtv/internal/monitor"
@@ -481,5 +484,202 @@ func TestHandleChannelsRejectsInvalidLogin(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "invalid channel name") {
 		t.Fatalf("body = %q, want it to mention 'invalid channel name'", w.Body.String())
+	}
+}
+
+type fakeBrowser struct {
+	mu      sync.Mutex
+	running bool
+	opened  []string
+	closed  int
+	onExit  func(string, time.Duration)
+}
+
+func (f *fakeBrowser) OpenStream(u string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.opened = append(f.opened, u)
+	f.running = true
+	return nil
+}
+
+func (f *fakeBrowser) CloseStream() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed++
+	f.running = false
+	return nil
+}
+
+func (f *fakeBrowser) IsRunning() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.running
+}
+
+func (f *fakeBrowser) SetOnExit(fn func(string, time.Duration)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onExit = fn
+}
+
+func (f *fakeBrowser) openedCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.opened)
+}
+
+func newTestServerFakeBrowser() (*Server, *fakeBrowser) {
+	fb := &fakeBrowser{}
+	s := NewServer("3000", browser.NewManager(browser.NewProcessManager()))
+	s.browserMgr = fb
+	s.reopenDelay = 50 * time.Millisecond
+	return s, fb
+}
+
+// openChannel makes c1 live and reconciles so the server "opens" it.
+func openChannel(s *Server) {
+	s.monitor.SetChannels([]monitor.Channel{{Login: "c1", ID: "1"}})
+	s.OnStreamOnline(&twitch.WSEvent{BroadcasterUserID: "1"})
+}
+
+func TestHandleBrowserExitReopens(t *testing.T) {
+	s, fb := newTestServerFakeBrowser()
+	openChannel(s)
+	if s.monitor.Current() != "c1" {
+		t.Fatal("expected c1 to be current")
+	}
+	if fb.openedCount() != 1 {
+		t.Fatalf("opened = %v, want 1 open", fb.opened)
+	}
+
+	s.handleBrowserExit("https://twitch.tv/c1", 30*time.Second)
+
+	if s.monitor.Current() != "" {
+		t.Fatal("unexpected exit should clear current")
+	}
+	login, at, _, _ := s.monitor.Status()
+	if login != "c1" || at.IsZero() {
+		t.Fatalf("Status = (%q, %v), want pending reopen for c1", login, at)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+	if got := fb.openedCount(); got != 2 {
+		t.Fatalf("opened count = %d, want 2 (initial + reopen)", got)
+	}
+	if s.monitor.Current() != "c1" {
+		t.Fatalf("Current = %q, want c1 after reopen", s.monitor.Current())
+	}
+}
+
+func TestHandleBrowserExitQuickExitsMarkFailed(t *testing.T) {
+	s, fb := newTestServerFakeBrowser()
+	openChannel(s)
+
+	for i := 0; i < maxQuickExits; i++ {
+		s.handleBrowserExit("https://twitch.tv/c1", 2*time.Second)
+		if i == maxQuickExits-1 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond) // let the reopen land so current is set again
+		if s.monitor.Current() != "c1" {
+			t.Fatalf("iteration %d: Current = %q, want c1", i, s.monitor.Current())
+		}
+	}
+
+	_, _, paused, failed := s.monitor.Status()
+	if failed != "c1" || paused != "c1" {
+		t.Fatalf("Status = paused %q failed %q, want c1/c1", paused, failed)
+	}
+	opensBefore := fb.openedCount()
+	time.Sleep(200 * time.Millisecond)
+	if fb.openedCount() != opensBefore {
+		t.Fatal("no reopen should happen after MarkFailed")
+	}
+	if s.monitor.Current() != "" {
+		t.Fatal("failed login should not be current")
+	}
+}
+
+func TestHandleBrowserExitIgnoresOtherURL(t *testing.T) {
+	s, fb := newTestServerFakeBrowser()
+	openChannel(s)
+
+	s.handleBrowserExit("https://twitch.tv/someoneelse", 2*time.Second)
+
+	if s.monitor.Current() != "c1" {
+		t.Fatal("unrelated window exit must not clear current")
+	}
+	if l, _, _, _ := s.monitor.Status(); l != "" {
+		t.Fatalf("no reopen should be scheduled, got %q", l)
+	}
+	_ = fb
+}
+
+func TestHandleBrowserClosePauses(t *testing.T) {
+	s, _ := newTestServerFakeBrowser()
+	openChannel(s)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/browser/close", nil)
+	w := httptest.NewRecorder()
+	s.handleBrowserClose(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+
+	if s.monitor.Current() != "" {
+		t.Fatal("close should clear current")
+	}
+	if _, _, p, _ := s.monitor.Status(); p != "c1" {
+		t.Fatalf("paused = %q, want c1", p)
+	}
+	// While paused, reconcile must not reopen it.
+	s.applyAction(s.monitor.Reconcile())
+	if s.monitor.Current() != "" {
+		t.Fatal("paused channel must not reopen")
+	}
+}
+
+func TestResyncLiveStatusAPIErrorKeepsStream(t *testing.T) {
+	s, _ := newTestServerFakeBrowser()
+	openChannel(s)
+
+	apiErr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer apiErr.Close()
+
+	client := twitch.NewClient("id", "sec", "tok", "rtok")
+	client.BaseURL = apiErr.URL
+	s.SetTwitchClient(client)
+
+	s.ResyncLiveStatus()
+
+	if s.monitor.Current() != "c1" {
+		t.Fatal("a failed resync must not drop the open stream")
+	}
+	if !s.monitor.Channels()[0].Live {
+		t.Fatal("a failed resync must not mark the channel offline")
+	}
+}
+
+func TestResyncLiveStatusAppliesMap(t *testing.T) {
+	s, _ := newTestServerFakeBrowser()
+	s.monitor.SetChannels([]monitor.Channel{{Login: "c1", ID: "1"}, {Login: "c2", ID: "2"}})
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":[{"id":"s1","user_id":"2","user_login":"c2","type":"live"}]}`)
+	}))
+	defer api.Close()
+
+	client := twitch.NewClient("id", "sec", "tok", "rtok")
+	client.BaseURL = api.URL
+	s.SetTwitchClient(client)
+
+	s.ResyncLiveStatus()
+
+	if s.monitor.Current() != "c2" {
+		t.Fatalf("Current = %q, want c2 after resync", s.monitor.Current())
 	}
 }

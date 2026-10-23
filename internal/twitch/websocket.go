@@ -77,6 +77,9 @@ type WebSocketManager struct {
 	isReconnecting    bool
 	reconnectAttempts int
 	WSURL             string // Exported for mocking/testing
+	// OnResubscribed is called after subscriptions succeed on a NEW session
+	// (not the first session, not a session_reconnect migration).
+	OnResubscribed func()
 }
 
 // NewWebSocketManager creates an uninitialized WebSocket manager.
@@ -219,6 +222,7 @@ func (wm *WebSocketManager) readLoop(conn *websocket.Conn) {
 				fmt.Printf("Twitch EventSub WebSocket session migrated. Session ID: %s\n", msg.Payload.Session.ID)
 				continue
 			}
+			hadSession := wm.sessionID != ""
 			wm.sessionID = msg.Payload.Session.ID
 			wm.subscriptions = nil
 			wm.mu.Unlock()
@@ -241,6 +245,9 @@ func (wm *WebSocketManager) readLoop(conn *websocket.Conn) {
 				wm.mu.Lock()
 				wm.reconnectAttempts = 0
 				wm.mu.Unlock()
+				if hadSession && wm.OnResubscribed != nil {
+					wm.OnResubscribed()
+				}
 			}()
 
 		case "session_keepalive":
