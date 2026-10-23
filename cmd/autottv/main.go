@@ -74,6 +74,7 @@ func main() {
 			} else {
 				fmt.Printf("[AutoTTV] Starting new EventSub WebSocket for channel IDs: %v...\n", ids)
 				activeWSMgr = twitch.NewWebSocketManager(twitchClient, ids, server.OnStreamOnline, server.OnStreamOffline)
+				activeWSMgr.OnResubscribed = server.ResyncLiveStatus
 				server.SetWSManager(activeWSMgr)
 
 				// Run connection in background

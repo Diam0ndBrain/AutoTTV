@@ -17,6 +17,7 @@
 		.status-live { color: #00f0ff; text-shadow: 0 0 10px rgba(0, 240, 255, 0.3); }
 		.status-offline { color: #adadb8; }
 		.status-active { color: #2ecc71; text-shadow: 0 0 10px rgba(46, 204, 113, 0.3); }
+		.status-warning { color: #f0a030; text-shadow: 0 0 10px rgba(240, 160, 48, 0.3); }
 		.form-inline { display: flex; gap: 10px; }
 		input[type="text"], input[type="password"] { flex-grow: 1; padding: 12px; border-radius: 6px; border: 1px solid #3f3f46; background-color: #27272a; color: #fff; font-size: 14px; }
 		input[type="text"]:focus, input[type="password"]:focus { outline: none; border-color: #9146ff; }
@@ -235,7 +236,12 @@
 			}
 		}
 
-		function renderChannelStatus(chs, current) {
+		let lastChans = initialChannels || [];
+		let lastStatus = {};
+
+		function renderChannelStatus(chs, data) {
+			lastChans = chs;
+			lastStatus = data || {};
 			const chanStatus = document.getElementById('chan-status');
 			if (!chanStatus) return;
 
@@ -246,17 +252,31 @@
 				return;
 			}
 
+			const nowMs = Date.now();
 			let html = '';
 			chs.forEach((c, i) => {
 				const badge = c.live ? '<span class="status-live">LIVE</span>' : '<span class="status-offline">offline</span>';
-				const watching = (c.login === current) ? '<span class="status-active">▶ watching</span>' : '';
-				html += `<div style="display: flex; gap: 10px; align-items: center; margin-bottom: 6px;"><span class="row-num">${i + 1}.</span><span>${c.login}</span>${badge}${watching}</div>`;
+				let extra = '';
+				if (c.login === lastStatus.reopen_login && lastStatus.reopen_at > nowMs) {
+					const secs = Math.ceil((lastStatus.reopen_at - nowMs) / 1000);
+					extra = `<span class="status-warning">⟳ window closed — reopening in ${secs}s</span>`;
+				} else if (c.login === lastStatus.reopen_failed) {
+					extra = '<span class="status-warning">⚠ browser keeps closing — auto-reopen stopped until the channel changes</span>';
+				} else if (c.login === lastStatus.paused) {
+					extra = '<span class="status-warning">⏸ paused (closed from dashboard) — resumes when the stream restarts</span>';
+				} else if (c.login === lastStatus.current) {
+					extra = '<span class="status-active">▶ watching</span>';
+				}
+				html += `<div style="display: flex; gap: 10px; align-items: center; margin-bottom: 6px;"><span class="row-num">${i + 1}.</span><span>${c.login}</span>${badge}${extra}</div>`;
 			});
 			chanStatus.innerHTML = html;
 		}
 
+		// Re-render every second so the reopen countdown ticks between polls
+		setInterval(() => renderChannelStatus(lastChans, lastStatus), 1000);
+
 		seedChannels(initialChannels || []);
-		renderChannelStatus(initialChannels || [], null);
+		renderChannelStatus(initialChannels || [], {});
 
 		function renderCampaigns(campaigns, autoCampaign) {
 			const listContainer = document.getElementById('campaigns-list');
@@ -315,7 +335,7 @@
 				}
 				
 				// Update monitored channel status list
-				renderChannelStatus(data.channels || [], data.current);
+				renderChannelStatus(data.channels || [], data);
 
 				if (!channelsDirty) {
 					seedChannels(data.channels);

@@ -1,5 +1,7 @@
 package browser
 
+import "time"
+
 // StreamManager defines the interface for open, close and status checks of a stream player.
 type StreamManager interface {
 	OpenStream(streamURL string) error
@@ -37,4 +39,9 @@ func (m *Manager) CloseStream() error {
 // IsRunning returns whether the stream window is running.
 func (m *Manager) IsRunning() bool {
 	return m.process.IsRunning()
+}
+
+// SetOnExit registers a callback for unexpected browser process exits.
+func (m *Manager) SetOnExit(fn func(url string, lifetime time.Duration)) {
+	m.process.SetOnExit(fn)
 }

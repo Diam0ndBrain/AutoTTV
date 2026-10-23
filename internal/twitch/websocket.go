@@ -77,6 +77,9 @@ type WebSocketManager struct {
 	isReconnecting    bool
 	reconnectAttempts int
 	WSURL             string // Exported for mocking/testing
+	// OnResubscribed is called after subscriptions succeed on a NEW session
+	// (not the first session, not a session_reconnect migration).
+	OnResubscribed func()
 }
 
 // NewWebSocketManager creates an uninitialized WebSocket manager.
@@ -187,9 +190,10 @@ func (wm *WebSocketManager) readLoop(conn *websocket.Conn) {
 		if err != nil {
 			wm.mu.Lock()
 			isStopped := wm.isStopped()
+			isCurrent := wm.conn == conn
 			wm.mu.Unlock()
 
-			if !isStopped {
+			if !isStopped && isCurrent {
 				fmt.Printf("WebSocket read error: %v\n", err)
 				wm.handleDisconnect()
 			}
@@ -209,23 +213,42 @@ func (wm *WebSocketManager) readLoop(conn *websocket.Conn) {
 		switch msg.Metadata.MessageType {
 		case "session_welcome":
 			wm.mu.Lock()
-			wm.sessionID = msg.Payload.Session.ID
 			wm.keepaliveTimeout = time.Duration(msg.Payload.Session.KeepaliveTimeoutSeconds+3) * time.Second
-			wm.reconnectAttempts = 0
-			wm.subscriptions = nil
 			broadcasterIDs := append([]string(nil), wm.broadcasterIDs...)
+			if wm.sessionID == msg.Payload.Session.ID {
+				// A migrated session keeps its existing subscriptions; nothing to redo.
+				wm.reconnectAttempts = 0
+				wm.mu.Unlock()
+				fmt.Printf("Twitch EventSub WebSocket session migrated. Session ID: %s\n", msg.Payload.Session.ID)
+				continue
+			}
+			hadSession := wm.sessionID != ""
+			wm.sessionID = msg.Payload.Session.ID
+			wm.subscriptions = nil
 			wm.mu.Unlock()
 
 			fmt.Printf("Twitch EventSub WebSocket session established. Session ID: %s\n", msg.Payload.Session.ID)
 
-			// Subscribe immediately (within the required 10-second window)
-			if len(broadcasterIDs) > 0 {
-				go func() {
-					if err := wm.subscribe(msg.Payload.Session.ID, broadcasterIDs); err != nil {
-						fmt.Printf("Subscription creation failed: %v\n", err)
-					}
-				}()
+			if len(broadcasterIDs) == 0 {
+				wm.mu.Lock()
+				wm.reconnectAttempts = 0
+				wm.mu.Unlock()
+				continue
 			}
+
+			// Subscribe immediately (within the required 10-second window)
+			go func() {
+				if err := wm.subscribe(msg.Payload.Session.ID, broadcasterIDs); err != nil {
+					fmt.Printf("Subscription creation failed: %v\n", err)
+					return
+				}
+				wm.mu.Lock()
+				wm.reconnectAttempts = 0
+				wm.mu.Unlock()
+				if hadSession && wm.OnResubscribed != nil {
+					wm.OnResubscribed()
+				}
+			}()
 
 		case "session_keepalive":
 			// Do nothing, lastMessageTime is already updated
@@ -314,7 +337,35 @@ func (wm *WebSocketManager) keepaliveMonitor(conn *websocket.Conn) {
 	}
 }
 
+// purgeStaleSubscriptions deletes leftover websocket-transport subscriptions from
+// earlier sessions so new subscription POSTs do not hit the Twitch subscription limit.
+func (wm *WebSocketManager) purgeStaleSubscriptions(sessionID string) {
+	removed := 0
+	for _, eventType := range []string{StreamOnline, StreamOffline} {
+		subs, err := wm.client.GetEventSubSubscriptions(eventType)
+		if err != nil {
+			fmt.Printf("Failed to list %s subscriptions for cleanup: %v\n", eventType, err)
+			continue
+		}
+		for _, sub := range subs {
+			if sub.Transport.Method != "websocket" || sub.Transport.SessionID == sessionID {
+				continue
+			}
+			if err := wm.client.UnsubscribeEventSub(sub.ID); err != nil {
+				fmt.Printf("Failed to delete stale %s subscription %s: %v\n", eventType, sub.ID, err)
+				continue
+			}
+			removed++
+		}
+	}
+	if removed > 0 {
+		fmt.Printf("Removed %d stale EventSub subscription(s) from previous sessions.\n", removed)
+	}
+}
+
 func (wm *WebSocketManager) subscribe(sessionID string, broadcasterIDs []string) error {
+	wm.purgeStaleSubscriptions(sessionID)
+
 	for _, broadcasterID := range broadcasterIDs {
 		fmt.Printf("Registering EventSub subscriptions for broadcaster ID: %s...\n", broadcasterID)
 
@@ -370,13 +421,14 @@ func (wm *WebSocketManager) handleDisconnect() {
 		wm.mu.Lock()
 		wm.isReconnecting = false
 		isStop := wm.isStopped()
+		wsURL := wm.WSURL
 		wm.mu.Unlock()
 
 		if isStop {
 			return
 		}
 
-		if err := wm.connect(defaultWebSocketURL); err != nil {
+		if err := wm.connect(wsURL); err != nil {
 			fmt.Printf("Reconnection attempt %d failed: %v\n", wm.reconnectAttempts, err)
 			wm.handleDisconnect()
 		}

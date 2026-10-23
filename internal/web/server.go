@@ -25,15 +25,33 @@ import (
 	"autoTtv/internal/twitch"
 )
 
+const (
+	quickExitThreshold = 10 * time.Second // an exit faster than this after launch counts as a quick exit
+	maxQuickExits      = 3                // consecutive quick exits before giving up on the login
+	defaultReopenDelay = 60 * time.Second // delay before reopening a stream whose window died
+)
+
+// browserController is the subset of browser.Manager the Server needs.
+type browserController interface {
+	OpenStream(streamURL string) error
+	CloseStream() error
+	IsRunning() bool
+	SetOnExit(fn func(url string, lifetime time.Duration))
+}
+
 // Server coordinates the Web UI dashboard, OAuth flow, and application state.
 type Server struct {
 	mu           sync.Mutex
 	port         string
-	browserMgr   *browser.Manager
+	browserMgr   browserController
 	wsMgr        *twitch.WebSocketManager
 	twitchClient *twitch.Client
 	monitor      *monitor.Monitor
 	actionMu     sync.Mutex // serializes browser close/open sequences from applyAction
+
+	reopenDelay    time.Duration // delay before reopening after an unexpected window exit
+	quickExits     int           // consecutive fast exits for quickExitLogin
+	quickExitLogin string
 
 	// State
 	clientId        string
@@ -61,13 +79,16 @@ type Server struct {
 
 // NewServer initializes the Web UI server.
 func NewServer(port string, browserMgr *browser.Manager) *Server {
-	return &Server{
+	s := &Server{
 		port:              port,
 		browserMgr:        browserMgr,
 		monitor:           monitor.New(),
+		reopenDelay:       defaultReopenDelay,
 		channelUpdateChan: make(chan struct{}, 5),
 		logoutChan:        make(chan struct{}, 1),
 	}
+	browserMgr.SetOnExit(s.handleBrowserExit)
+	return s
 }
 
 // Start runs the HTTP server and opens the dashboard/setup page.
@@ -270,7 +291,9 @@ func (s *Server) OnStreamOffline(ev *twitch.WSEvent) {
 func (s *Server) applyAction(a monitor.Action) {
 	s.actionMu.Lock()
 	defer s.actionMu.Unlock()
-	if a.Close {
+	// Close first whenever we're about to open and a browser is already running,
+	// so a drops/manual window can't block a monitored stream.
+	if a.Close || (a.Open != nil && s.browserMgr.IsRunning()) {
 		_ = s.browserMgr.CloseStream()
 	}
 	if a.Open != nil {
@@ -280,6 +303,70 @@ func (s *Server) applyAction(a monitor.Action) {
 			fmt.Printf("[AutoTTV] Error opening browser stream: %v\n", err)
 		}
 	}
+}
+
+// handleBrowserExit runs when the stream window's process exits on its own
+// (user closed it, crash). It reopens the monitored channel after reopenDelay,
+// unless the browser keeps dying right after launch.
+func (s *Server) handleBrowserExit(url string, lifetime time.Duration) {
+	cur := s.monitor.Current()
+	if cur == "" || url != "https://twitch.tv/"+cur {
+		// A manual test window or a drops window closing isn't our concern.
+		return
+	}
+
+	s.mu.Lock()
+	if lifetime < quickExitThreshold {
+		if s.quickExitLogin == cur {
+			s.quickExits++
+		} else {
+			s.quickExits = 1
+			s.quickExitLogin = cur
+		}
+	} else {
+		s.quickExits = 0
+	}
+	quickExits := s.quickExits
+	if quickExits >= maxQuickExits {
+		s.quickExits = 0
+	}
+	delay := s.reopenDelay
+	s.mu.Unlock()
+
+	if quickExits >= maxQuickExits {
+		s.monitor.MarkFailed(cur)
+		fmt.Printf("[AutoTTV] Browser for %s closed %d times right after launch; not reopening until the channel changes\n", cur, quickExits)
+		return
+	}
+
+	fmt.Printf("[AutoTTV] Stream window for %s closed unexpectedly; reopening in %v\n", cur, delay)
+	s.monitor.HoldReopen(cur, time.Now().Add(delay))
+	// A stale timer firing is harmless: Reconcile still honors the hold.
+	time.AfterFunc(delay, func() {
+		s.applyAction(s.monitor.Reconcile())
+	})
+}
+
+// ResyncLiveStatus refetches live status and reconciles once. Called after the
+// EventSub WebSocket resubscribes on a new session, to catch missed events.
+func (s *Server) ResyncLiveStatus() {
+	client := s.GetTwitchClient()
+	if client == nil {
+		return
+	}
+	ids := s.monitor.IDs()
+	if len(ids) == 0 {
+		return
+	}
+	live, err := client.GetLiveUserIDs(ids)
+	if err != nil {
+		// Don't treat channels as offline on error: that would close a live stream.
+		fmt.Printf("[AutoTTV] Failed to resync live status: %v\n", err)
+		return
+	}
+	s.monitor.SetLiveMap(live)
+	s.applyAction(s.monitor.Reconcile())
+	fmt.Println("[AutoTTV] Resynced live status after reconnect")
 }
 
 // loadChannels resolves logins to monitor channels (with live status), applies
@@ -420,7 +507,16 @@ func (s *Server) handleBrowserClose(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Pausing a monitored channel must not interleave with applyAction;
+	// CloseStream does not take actionMu, so holding it here is safe.
+	s.actionMu.Lock()
+	if cur := s.monitor.Current(); cur != "" {
+		s.monitor.Pause(cur)
+	} else if reopenLogin, _, _, _ := s.monitor.Status(); reopenLogin != "" {
+		s.monitor.Pause(reopenLogin)
+	}
 	err := s.browserMgr.CloseStream()
+	s.actionMu.Unlock()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -689,6 +785,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		s.stopWatchTicker()
 	}
 
+	reopenLogin, reopenAt, paused, failed := s.monitor.Status()
+	var reopenAtMs int64
+	if !reopenAt.IsZero() {
+		reopenAtMs = reopenAt.UnixMilli()
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -699,6 +801,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"current":       s.monitor.Current(),
 		"is_live":       s.monitor.Desired() != nil,
 		"browser_open":  browserRunning,
+		"reopen_login":  reopenLogin,
+		"reopen_at":     reopenAtMs,
+		"paused":        paused,
+		"reopen_failed": failed,
 		// Drops Watching State
 		"game_name":     s.gameName,
 		"drops_active":  s.dropsActive,
@@ -746,7 +852,10 @@ func (s *Server) handleClearGame(w http.ResponseWriter, r *http.Request) {
 
 	s.stopScraper()
 	s.stopWatchTicker()
-	_ = s.browserMgr.CloseStream()
+	// Only close the browser for drops; a monitored channel's window is not ours to kill here.
+	if s.monitor.Current() == "" {
+		_ = s.browserMgr.CloseStream()
+	}
 
 	s.persistSettings()
 
@@ -773,7 +882,9 @@ func (s *Server) handleToggleDrops(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.stopScraper()
 		s.stopWatchTicker()
-		_ = s.browserMgr.CloseStream()
+		if s.monitor.Current() == "" {
+			_ = s.browserMgr.CloseStream()
+		}
 	}
 
 	s.persistSettings()
@@ -803,7 +914,9 @@ func (s *Server) handleAutoWatch(w http.ResponseWriter, r *http.Request) {
 
 	if action == "stop" {
 		s.stopWatchTicker()
-		_ = s.browserMgr.CloseStream()
+		if s.monitor.Current() == "" {
+			_ = s.browserMgr.CloseStream()
+		}
 		w.WriteHeader(http.StatusOK)
 		return
 	}
